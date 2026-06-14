@@ -1,0 +1,20 @@
+# Build output
+.pio/
+build/
+*.bin
+*.hex
+*.elf
+*.map
+
+# IDE
+.vscode/
+*.code-workspace
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
