@@ -171,6 +171,18 @@ static void flash_read(uint32_t addr, uint8_t *buf, uint16_t len) {
     digitalWrite(FLASH_CS, HIGH);
 }
 
+// Wrapper cong khai de pdu_drv.cpp luu/doc trang thai relay
+void flash_read_bytes(uint32_t addr, uint8_t *buf, uint16_t len) {
+    flash_read(addr, buf, len);
+}
+void flash_write_bytes(uint32_t addr, const uint8_t *data, uint16_t len) {
+    flash_erase_sector(addr);
+    flash_write(addr, data, len);
+}
+void flash_erase_sector_at(uint32_t addr) {
+    flash_erase_sector(addr);
+}
+
 void flash_test_rw() {
 
     SerialDBG.println("FLASH RW TEST");

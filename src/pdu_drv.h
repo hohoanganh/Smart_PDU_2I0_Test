@@ -4,7 +4,7 @@
 void drv_init();
 
 // ===== RELAY CHOT (qua PCA9554) =====
-// Moi relay 2 chan dieu khien: P chan(2n)=DONG, P le(2n+1)=MO, xung 50ms
+// Moi relay 2 chan dieu khien: P chan(2n)=DONG, P le(2n+1)=MO, xung 200ms
 bool relay_set(uint8_t ch, bool on);   // ch = 1..4
 bool relay_get(uint8_t ch);
 void relay_print_status();

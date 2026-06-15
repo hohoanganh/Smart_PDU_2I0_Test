@@ -1,7 +1,7 @@
 # Smart PDU 2I0 – Firmware Test
 
 Bộ đóng/ngắt 4 relay chốt (latching relay) dựa trên nền AK MCU KIT
-(STM32L151CBT6), không có LCD. Điều khiển relay qua I/O expander **PCA9554**
+(STM32L151CBT6), không có LCD. Điều khiển relay qua I/O expander **PCA9554A**
 trên bus I2C1.
 
 ## Phần cứng
@@ -9,7 +9,7 @@ trên bus I2C1.
 | Khối | Kết nối |
 |---|---|
 | PCA9554A của NXP| I2C1 (PB6/PB7), A0-A2 = GND → addr **0x38**, INT → PB15 |
-| Relay chốt 1-4 | P0/P1=RL1, P2/P3=RL2, P4/P5=RL3, P6/P7=RL4 (chẵn=ĐÓNG, lẻ=MỞ, xung 0.5s rồi nhả) |
+| Relay chốt 1-4 | P0/P1=RL1, P2/P3=RL2, P4/P5=RL3, P6/P7=RL_BATT (chẵn=ĐÓNG, lẻ=MỞ, xung 200ms rồi nhả) |
 | Nút BT1-4 | PB3, PC13, PB4, PB9 — giữ 1s = beep + đảo trạng thái relay tương ứng |
 | LED1-4 | PB1, PB12, PB13, PA11 — sáng = relay đang ĐÓNG |
 | LED_DBG | PB8 (heartbeat 1Hz) |

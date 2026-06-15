@@ -14,7 +14,7 @@ void setup() {
     drv_init();
 
     uart_log("SYSTEM INIT");
-    uart_log("SMART PDU 2I0 FW " FW_VERSION " (" __DATE__ ")");
+    uart_log("SMART PDU 2.0 FW " FW_VERSION " (" __DATE__ ")");
     uart_log("Type: help");
 }
 

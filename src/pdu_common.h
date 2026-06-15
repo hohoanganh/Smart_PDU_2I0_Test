@@ -17,13 +17,13 @@
 // ===== LED =====
 #define LED_DBG PB8     // LED heartbeat
 
-#define LED1 PB1        // trang thai relay 1
+#define LED1 PB1        // trạng thái relay 1
 #define LED2 PB12
 #define LED3 PB13
 #define LED4 PA11
 
-// LED1-4 ACTIVE-LOW: kich muc THAP (pin LOW) = LED sang. LED bam theo trang
-// thai RELAY (giu lien tuc, vi la relay chot) - khong theo xung kich relay.
+// LED1-4 ACTIVE-LOW: kích mức THẤP (pin LOW) = LED sáng. LED bám theo trạng
+// thái RELAY (giữ liên tục, vì là relay chốt) - không theo xung kích relay.
 #define LED_ON_LVL  LOW
 #define LED_OFF_LVL HIGH
 
@@ -64,7 +64,7 @@
 #define SPI_MOSI PA7
 #define FLASH_CS PB14
 
-// ===== PCA9554 (I2C1 PB6/PB7, A0-A2 = VCC -> dia chi 0x38) =====
+// ===== PCA9554 (I2C1 PB6/PB7, A0-A2 = GND -> dia chi 0x38) =====
 #define PCA_ADDR 0x38
 #define PCA_INT  PB15   // chan INT cua PCA9554
 

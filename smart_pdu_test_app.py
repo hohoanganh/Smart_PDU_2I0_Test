@@ -31,7 +31,7 @@ BAUDRATES   = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200,
                230400, 460800, 921600]
 CMD_TIMEOUT = 3.0
 N_RELAY     = 4
-RL_SEQ_DELAY = 0.65   # delay giữa mỗi relay khi ALL ON/OFF (tránh đóng dồn)
+RL_SEQ_DELAY = 0.35   # delay giữa mỗi relay khi ALL ON/OFF (tránh đóng dồn)
 
 IMG_NAME    = "PDU_device.png"
 FPT_LOGO    = "FPT_logo.png"
@@ -64,7 +64,7 @@ BTN_UP_FILL   = "#334155"
 BTN_DOWN_LINE = "#1d4ed8"
 BTN_UP_LINE   = "#64748b"
 
-RX_RELAY_RE      = re.compile(r"RL([1-4])\s*:\s*(ON|OFF)")
+RX_RELAY_RE      = re.compile(r"RL([1-3]|_BATT)\s*:\s*(ON|OFF)")
 RX_LED_RE        = re.compile(r"LED([1-4])\s*:\s*(ON|OFF)")
 RX_BTN_RE        = re.compile(r"BT([1-4])\s*:\s*(DOWN|UP)")
 RX_FW_RESET_RE   = re.compile(r"SYSTEM INIT")
@@ -101,22 +101,22 @@ TESTS = [
      "must": ["I2C: 0x38", "OK"], "must_not": []},
     {"kind": "auto",   "name": "Flash ID/Read/RW",    "cmd": "fwr",      "wait": 1.5,
      "must": ["FLASH OK"],       "must_not": ["FLASH FAIL"]},
-    {"kind": "auto",   "name": "Relay 1 ON",  "cmd": "rl 1 on",  "wait": 1.0,
+    {"kind": "auto",   "name": "Relay 1 ON",  "cmd": "rl 1 on",  "wait": 0.5,
      "must": ["RL1: ON",  "OK"], "must_not": ["PCA FAIL"]},
-    {"kind": "auto",   "name": "Relay 1 OFF", "cmd": "rl 1 off", "wait": 1.0,
+    {"kind": "auto",   "name": "Relay 1 OFF", "cmd": "rl 1 off", "wait": 0.5,
      "must": ["RL1: OFF", "OK"], "must_not": ["PCA FAIL"]},
-    {"kind": "auto",   "name": "Relay 2 ON",  "cmd": "rl 2 on",  "wait": 1.0,
+    {"kind": "auto",   "name": "Relay 2 ON",  "cmd": "rl 2 on",  "wait": 0.5,
      "must": ["RL2: ON",  "OK"], "must_not": ["PCA FAIL"]},
-    {"kind": "auto",   "name": "Relay 2 OFF", "cmd": "rl 2 off", "wait": 1.0,
+    {"kind": "auto",   "name": "Relay 2 OFF", "cmd": "rl 2 off", "wait": 0.5,
      "must": ["RL2: OFF", "OK"], "must_not": ["PCA FAIL"]},
-    {"kind": "auto",   "name": "Relay 3 ON",  "cmd": "rl 3 on",  "wait": 1.0,
+    {"kind": "auto",   "name": "Relay 3 ON",  "cmd": "rl 3 on",  "wait": 0.5,
      "must": ["RL3: ON",  "OK"], "must_not": ["PCA FAIL"]},
-    {"kind": "auto",   "name": "Relay 3 OFF", "cmd": "rl 3 off", "wait": 1.0,
+    {"kind": "auto",   "name": "Relay 3 OFF", "cmd": "rl 3 off", "wait": 0.5,
      "must": ["RL3: OFF", "OK"], "must_not": ["PCA FAIL"]},
-    {"kind": "auto",   "name": "Relay 4 ON",  "cmd": "rl 4 on",  "wait": 1.0,
-     "must": ["RL4: ON",  "OK"], "must_not": ["PCA FAIL"]},
-    {"kind": "auto",   "name": "Relay 4 OFF", "cmd": "rl 4 off", "wait": 1.0,
-     "must": ["RL4: OFF", "OK"], "must_not": ["PCA FAIL"]},
+    {"kind": "auto",   "name": "Relay BATT ON",  "cmd": "rl 4 on",  "wait": 0.5,
+     "must": ["RL_BATT: ON",  "OK"], "must_not": ["PCA FAIL"]},
+    {"kind": "auto",   "name": "Relay BATT OFF", "cmd": "rl 4 off", "wait": 0.5,
+     "must": ["RL_BATT: OFF", "OK"], "must_not": ["PCA FAIL"]},
     {"kind": "led",    "name": "LED 1-4 sáng lần lượt (xác nhận)"},
     {"kind": "button", "name": "Nút nhấn BT1-4 (nhấn từng nút)"},
     {"kind": "dip",    "name": "Dip Switch 1-4 (gạt từng bit)"},
@@ -452,7 +452,7 @@ class App(tk.Tk):
 
             tk.Label(cf, text=f"CH {i}", bg=CARD_BG, fg="#94a3b8",
                      font=("Segoe UI", 9, "bold")).pack()
-            tk.Label(cf, text=f"RELAY {i}", bg=CARD_BG, fg="#1e293b",
+            tk.Label(cf, text=f"RELAY {i}" if i != 4 else "RELAY BATT", bg=CARD_BG, fg="#1e293b",
                      font=("Segoe UI", 11, "bold")).pack(pady=(2, 8))
 
             b = self._flat_btn(cf, "OFF", RL_OFF_BG, font_size=10,
@@ -882,7 +882,7 @@ class App(tk.Tk):
 
     def _relay_all(self, on):
         """Điều khiển tuần tự relay 1->4, delay RL_SEQ_DELAY giữa mỗi relay.
-        Tránh tăng dòng đột biến cho nguồn cấp relay (latching relay pulse 500ms/cái).
+        Tránh tăng dòng đột biến cho nguồn cấp relay (latching relay pulse 200ms/cái).
         Chạy trong thread riêng, nút ALL ON/OFF disable trong lúc chạy."""
         if self.testing or not self.worker.is_open:
             return
@@ -927,7 +927,7 @@ class App(tk.Tk):
             return
         def _do():
             resp = self.worker.send_cmd("rls", 0.5)
-            states = {int(m.group(1)): (m.group(2) == "ON")
+            states = {(4 if m.group(1) == "_BATT" else int(m.group(1))): (m.group(2) == "ON")
                       for m in RX_RELAY_RE.finditer(resp)}
             dresp = self.worker.send_cmd("dip", 0.4)        # đọc DIP Switch hiện tại
             dm = RX_DIP_RE.search(dresp)
@@ -999,7 +999,9 @@ class App(tk.Tk):
             self._log("[BT_ERR: Nhấn nhiều nút - không điều khiển relay]\n", "err")
 
         for m in RX_RELAY_RE.finditer(text):
-            self._update_relay_btn(int(m.group(1)), m.group(2) == "ON")
+            ch_key = m.group(1)
+            ch = 4 if ch_key == "_BATT" else int(ch_key)
+            self._update_relay_btn(ch, m.group(2) == "ON")
         for m in RX_LED_RE.finditer(text):
             _gpio_on = m.group(2) == "ON"
             self._update_led_ind(int(m.group(1)), not _gpio_on if LED_ACTIVE_LOW else _gpio_on)
@@ -1255,7 +1257,7 @@ class App(tk.Tk):
         results = []
         fw_ver = ""
         # Chờ thiết bị rảnh (vd vừa sync relay khi kết nối - mỗi relay pulse
-        # 500ms) và xả buffer trước khi chạy, tránh 'ver' (test đầu) bị kẹt
+        # 200ms) và xả buffer trước khi chạy, tránh 'ver' (test đầu) bị kẹt
         # phía sau hàng lệnh relay -> fail oan.
         while time.time() < self._rl_busy_until and not self._stop_test.is_set():
             time.sleep(0.1)
