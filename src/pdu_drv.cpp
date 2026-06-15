@@ -72,11 +72,11 @@ bool pca_ok() { return pca_present; }
 //  RL_BATT |    D0     |    D1
 //
 static const uint8_t RELAY_PIN[5][2] = {
-    {0, 0},  // ch=0: khong dung (dummy de index 1-based)
-    {2, 5},  // ch=1 (RL1):    OFF=D2, ON=D5
-    {3, 6},  // ch=2 (RL2):    OFF=D3, ON=D6
-    {4, 7},  // ch=3 (RL3):    OFF=D4, ON=D7
-    {0, 1},  // ch=4 (RL_BATT): OFF=D0, ON=D1
+    {0, 0}, // ch=0: khong dung (dummy de index 1-based)
+    {2, 5}, // ch=1 (RL1):    OFF=D2, ON=D5
+    {3, 6}, // ch=2 (RL2):    OFF=D3, ON=D6
+    {4, 7}, // ch=3 (RL3):    OFF=D4, ON=D7
+    {0, 1}, // ch=4 (RL_BATT): OFF=D0, ON=D1
 };
 
 static void led_update();
@@ -176,7 +176,7 @@ static void relay_restore_from_flash() {
     while (millis() - _t0 < RELAY_PULSE_MS)
       buzzer_update();
     pca_write(PCA_REG_OUT, 0x00); // nha xung
-    delay(50); // cho relay on dinh giua cac xung
+    delay(50);                    // cho relay on dinh giua cac xung
   }
   led_update(); // cap nhat LED sau khi pulse xong
   SerialDBG.println("[Relay restore: done]");
@@ -546,6 +546,6 @@ void drv_init() {
   dip_init();
 
   SerialDBG.println(pca_init() ? "PCA9554 OK" : "PCA9554 NOT FOUND");
-  relay_restore_from_flash(); // khôi phục trạng thái relay: đọc flash + pulse relay + cập nhật LED
+  relay_restore_from_flash(); // khôi phục trạng thái relay: đọc flash + pulse
+                              // relay + cập nhật LED
 }
-                                                 

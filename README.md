@@ -58,8 +58,7 @@ Monitor→  pio device monitor --baud 115200
 | `dip` | Đọc giá trị DIP Switch 4-bit |
 | `rs485 <text>` | Gửi text qua RS485 |
 | `rsl` | Loopback RS485 (nối tắt A-B) |
-| `u3` | Loopback UART3 (nối tắt PB10-PB11) |
-| `baud rs485\|u3 <bps>` | Đổi baudrate RS485 / UART3 lúc chạy (1200–921600) |
+| `baud rs485 <bps>` | Đổi baudrate RS485 lúc chạy (1200–921600) |
 | `ver` | Phiên bản firmware |
 | `help` | Danh sách lệnh |
 
@@ -100,7 +99,7 @@ File exe xuất ra: `dist\Smart_PDU_Test.exe` (không cần Python trên máy đ
 | Điều khiển relay | Từng kênh, All ON/OFF, Sync trạng thái xuống thiết bị |
 | Giám sát | LED1-4, nút BT1-4, DIP Switch — cập nhật real-time từ serial |
 | Test RS485 | Gửi text + kiểm tra loopback, đổi baud ngay trong app |
-| Terminal | Gõ lệnh CLI trực tiếp; quick commands (id/ver/i2c/fwr/rls/dip/rsl/u3...) |
+| Terminal | Gõ lệnh CLI trực tiếp; quick commands (id/ver/i2c/fwr/rls/dip/rsl) |
 | Lịch sử lệnh | Phím ↑ / ↓ để duyệt lại lệnh đã gửi (tối đa 50) |
 | Run Test | Test sequence tự động: i2c, flash, relay 1–4, LED, button, DIP, RS485 |
 | Báo cáo | Xuất kết quả ra `test_report.xlsx` (hoặc CSV nếu không có openpyxl) |
@@ -111,4 +110,4 @@ File exe xuất ra: `dist\Smart_PDU_Test.exe` (không cần Python trên máy đ
 - Board **không có RTC** và **không có SHT45** — không có lệnh `rtc`, `time`, `sht`
 - RS485 mặc định 9600, đổi được qua lệnh `baud rs485 <n>` hoặc giao diện app
 - Sau khi kết nối, app tự đọc trạng thái relay từ thiết bị (`rls`) và đồng bộ giao diện
-- Nút **Sync** ghi đè trạng thái relay hiện tại của app xuống thiết bị (dùng khi relay bị mất đồng bộ)
+- Nút **Sync** ghi đè trạng thái relay

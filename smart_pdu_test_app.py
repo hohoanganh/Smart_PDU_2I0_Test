@@ -714,7 +714,7 @@ class App(tk.Tk):
             ("id",      "id"),       ("ver",  "ver"),   ("help", "help"), ("|", None),
             ("i2c",     "i2c"),      ("fwr",  "fwr"),   ("rls",  "rls"),  ("dip", "dip"), ("|", None),
             ("all ON",  "rl all on"),("all OFF","rl all off"), ("|", None),
-            ("RS485\u21ba","rsl"),  ("UART3\u21ba","u3"),
+            ("RS485\u21ba","rsl"),
         ]
         for _lbl, _cmd in _qcmds:
             if _cmd is None:

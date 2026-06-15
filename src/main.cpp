@@ -10,28 +10,28 @@ HardwareSerial SerialEXT(UART3_RX, UART3_TX);
 
 void setup() {
 
-    hal_init();
-    drv_init();
+  hal_init();
+  drv_init();
 
-    uart_log("SYSTEM INIT");
-    uart_log("SMART PDU 2.0 FW " FW_VERSION " (" __DATE__ ")");
-    uart_log("Type: help");
+  uart_log("SYSTEM INIT");
+  uart_log("SMART PDU 2.0 FW " FW_VERSION " (" __DATE__ ")");
+  uart_log("Type: help");
 }
 
 void loop() {
 
-    cli_process();
-    uart3_echo();
-    rs485_process();
+  cli_process();
+  uart3_echo();
+  rs485_process();
 
-    btn_process();   // BT1-4 toggle relay 1-4
-    dip_process();   // DIP switch 4-bit -> in "DIP: 0xN" khi thay doi
-    buzzer_update(); // tat buzzer active dung gio (non-blocking)
+  btn_process();   // BT1-4 toggle relay 1-4
+  dip_process();   // DIP switch 4-bit -> in "DIP: 0xN" khi thay doi
+  buzzer_update(); // tat buzzer active dung gio (non-blocking)
 
-    // ===== LED heartbeat =====
-    static uint32_t t = 0;
-    if (millis() - t > 500) {
-        t = millis();
-        led_dbg_toggle();
-    }
+  // ===== LED heartbeat =====
+  static uint32_t t = 0;
+  if (millis() - t > 500) {
+    t = millis();
+    led_dbg_toggle();
+  }
 }
