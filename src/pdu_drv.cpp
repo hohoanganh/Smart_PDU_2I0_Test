@@ -80,6 +80,7 @@ static const uint8_t RELAY_PIN[5][2] = {
 };
 
 static void led_update();
+static void relay_restore_from_flash();
 
 bool relay_set(uint8_t ch, bool on) {
 
@@ -141,6 +142,44 @@ static void led_update() {
   // LED bam theo trang thai relay (giu lien tuc). Active-low: ON = LOW.
   for (uint8_t i = 1; i <= 4; i++)
     digitalWrite(led_pins[i], relay_state[i] ? LED_ON_LVL : LED_OFF_LVL);
+}
+
+// Sau reset MCU: doc flash -> pulse relay -> cap nhat LED.
+// Relay chot giu trang thai co khi nhung neu mat nguon hoan toan thi can
+// pulse lai de dam bao dong bo vat ly. LED luon duoc cap nhat.
+static void relay_restore_from_flash() {
+  relay_load(); // doc vao relay_state[] tu flash
+  if (!pca_present) {
+    // PCA khong co mat, chi cap nhat LED theo trang thai da luu
+    led_update();
+    return;
+  }
+  bool any = false;
+  for (uint8_t i = 1; i <= 4; i++) {
+    if (relay_state[i]) {
+      any = true;
+      break;
+    }
+  }
+  if (!any) {
+    // Khong co relay nao ON -> chi cap nhat LED, khong pulse
+    led_update();
+    SerialDBG.println("[Relay restore: all OFF, no pulse needed]");
+    return;
+  }
+  // Pulse lai tung relay theo trang thai da luu (khong save lai flash)
+  SerialDBG.println("[Relay restore: pulsing relays...]");
+  for (uint8_t ch = 1; ch <= 4; ch++) {
+    uint8_t pin = RELAY_PIN[ch][relay_state[ch] ? 1 : 0];
+    pca_write(PCA_REG_OUT, (uint8_t)(1 << pin));
+    uint32_t _t0 = millis();
+    while (millis() - _t0 < RELAY_PULSE_MS)
+      buzzer_update();
+    pca_write(PCA_REG_OUT, 0x00); // nha xung
+    delay(50); // cho relay on dinh giua cac xung
+  }
+  led_update(); // cap nhat LED sau khi pulse xong
+  SerialDBG.println("[Relay restore: done]");
 }
 
 // Dieu khien truc tiep LED1-4 (test, doc lap voi relay).
@@ -507,6 +546,6 @@ void drv_init() {
   dip_init();
 
   SerialDBG.println(pca_init() ? "PCA9554 OK" : "PCA9554 NOT FOUND");
-  relay_load(); // khôi phục trạng thái relay từ flash (không pulse relay)
+  relay_restore_from_flash(); // khôi phục trạng thái relay: đọc flash + pulse relay + cập nhật LED
 }
                                                  

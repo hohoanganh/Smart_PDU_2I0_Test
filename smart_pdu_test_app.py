@@ -248,6 +248,8 @@ class App(tk.Tk):
         self._dip_test_seen   = set()   # các bit DIP đã gạt trong bước test
         self._dip_last_value  = None    # giá trị DIP gần nhất (để so sánh thay đổi)
         self._buzzer_muted    = False   # tắt tiếng bíp (test im lặng)
+        self._cmd_history     = []      # lịch sử lệnh terminal (tối đa 50)
+        self._cmd_hist_idx    = -1      # vị trí duyệt lịch sử (-1 = hiện tại)
 
         self._build_ui()
         self._refresh_ports()
@@ -694,10 +696,38 @@ class App(tk.Tk):
                                 relief="flat", bd=0)
         self.ent_cmd.pack(side="left", fill="x", expand=True, ipady=4)
         self.ent_cmd.bind("<Return>", self._send_manual)
+        self.ent_cmd.bind("<Up>",    self._cmd_hist_up)
+        self.ent_cmd.bind("<Down>",  self._cmd_hist_down)
         self._flat_btn(inp, "Gửi", BLUE_BTN, hover=BLUE_HOV,
                         font_size=9, bold=True, padx=12, pady=4,
                         raised=True,
                         command=self._send_manual).pack(side="left", padx=(8, 0))
+
+        # Quick commands — khớp với lệnh CLI có trên thiết bị (không có RTC/SHT45)
+        qf = tk.Frame(tm_outer, bg="#0f172a", padx=6, pady=3)
+        qf.pack(side="bottom", fill="x")
+        tk.Frame(qf, bg="#1e293b", height=1).pack(fill="x", side="top", pady=(0, 3))
+        tk.Label(qf, text="Quick:", bg="#0f172a", fg="#475569",
+                 font=("Consolas", 8)).pack(side="left", padx=(0, 4))
+        self._qcmd_btns = []
+        _qcmds = [
+            ("id",      "id"),       ("ver",  "ver"),   ("help", "help"), ("|", None),
+            ("i2c",     "i2c"),      ("fwr",  "fwr"),   ("rls",  "rls"),  ("dip", "dip"), ("|", None),
+            ("all ON",  "rl all on"),("all OFF","rl all off"), ("|", None),
+            ("RS485\u21ba","rsl"),  ("UART3\u21ba","u3"),
+        ]
+        for _lbl, _cmd in _qcmds:
+            if _cmd is None:
+                tk.Label(qf, text="\u2502", bg="#0f172a", fg="#334155",
+                         font=("Consolas", 9)).pack(side="left", padx=3)
+            else:
+                _b = tk.Button(qf, text=_lbl, bg="#1e3a5f", fg="#7dd3fc",
+                               activebackground="#2563eb", activeforeground="white",
+                               font=("Consolas", 8), relief="flat", bd=0,
+                               padx=6, pady=2, state="disabled",
+                               command=lambda c=_cmd: self._quick_send(c))
+                _b.pack(side="left", padx=1, pady=1)
+                self._qcmd_btns.append(_b)
 
         # Text log + scrollbar
         self.txt = tk.Text(tm_outer, bg="#0f172a", fg="#e2e8f0",
@@ -736,6 +766,8 @@ class App(tk.Tk):
         for _b in ("btn_rs485", "btn_rs485_baud", "btn_test_i2c", "btn_test_flash"):
             if hasattr(self, _b):
                 getattr(self, _b).config(state=st)
+        for _b in getattr(self, "_qcmd_btns", []):
+            _b.config(state=st)
 
     def _rs485_manual_test(self):
         """Gửi text trong ô RS485 qua bus, kiểm tra có vòng về (loopback)."""
@@ -875,7 +907,7 @@ class App(tk.Tk):
             return
         if time.time() < self._rl_busy_until:
             return
-        self._rl_busy_until = time.time() + N_RELAY * 0.65 + 0.5
+        self._rl_busy_until = time.time() + N_RELAY * RL_SEQ_DELAY + 0.5
         self._log("[Sync trạng thái relay từ app xuống thiết bị...]\n", "tx")
         for i in range(1, N_RELAY + 1):
             self.worker.write_line(f"rl {i} {'on' if self.relay_state[i] else 'off'}")
@@ -1158,12 +1190,49 @@ class App(tk.Tk):
             messagebox.showwarning(APP_TITLE, "Chưa kết nối COM port")
             return
         self.worker.write_line(cmd)
+        if not self._cmd_history or self._cmd_history[-1] != cmd:
+            self._cmd_history.append(cmd)
+            if len(self._cmd_history) > 50:
+                self._cmd_history.pop(0)
+        self._cmd_hist_idx = -1
         # Nếu người dùng đổi baud RS485 qua terminal -> đồng bộ nhãn hiển thị ngay
         # (range khớp firmware 1200..921600; firmware cũng echo "RS485 BAUD:" lại)
         mb = re.match(r"\s*baud\s+rs485\s+(\d+)\s*$", cmd, re.IGNORECASE)
         if mb and 1200 <= int(mb.group(1)) <= 921600:
             self._set_rs485_baud_display(mb.group(1))
         self.ent_cmd.delete(0, "end")
+
+    def _cmd_hist_up(self, _evt=None):
+        """Phím ↑: duyệt lịch sử lệnh về phía cũ hơn."""
+        if not self._cmd_history:
+            return "break"
+        if self._cmd_hist_idx < len(self._cmd_history) - 1:
+            self._cmd_hist_idx += 1
+        self.ent_cmd.delete(0, "end")
+        self.ent_cmd.insert(0, self._cmd_history[-(self._cmd_hist_idx + 1)])
+        return "break"
+
+    def _cmd_hist_down(self, _evt=None):
+        """Phím ↓: duyệt lịch sử lệnh về phía mới hơn."""
+        if self._cmd_hist_idx > 0:
+            self._cmd_hist_idx -= 1
+            self.ent_cmd.delete(0, "end")
+            self.ent_cmd.insert(0, self._cmd_history[-(self._cmd_hist_idx + 1)])
+        else:
+            self._cmd_hist_idx = -1
+            self.ent_cmd.delete(0, "end")
+        return "break"
+
+    def _quick_send(self, cmd):
+        """Gửi lệnh từ nút quick command trong terminal."""
+        if not self.worker.is_open or self.testing:
+            return
+        self.worker.write_line(cmd)
+        if not self._cmd_history or self._cmd_history[-1] != cmd:
+            self._cmd_history.append(cmd)
+            if len(self._cmd_history) > 50:
+                self._cmd_history.pop(0)
+        self._cmd_hist_idx = -1
 
     def _clear_log(self):
         self.txt.config(state="normal")
