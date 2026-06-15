@@ -25,17 +25,17 @@ except ImportError:
     sys.exit(1)
 
 APP_TITLE   = "Smart PDU 2.0 - App Test"
-DEVICE_ID_SIG = "SMART_PDU_2I0"   # van tay xac thuc dung thiet bi (lenh 'id')
+DEVICE_ID_SIG = "SMART_PDU_2I0"   # ID xác thực dùng thiết bị (lệnh 'id')
 BAUD        = 115200
 BAUDRATES   = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200,
                230400, 460800, 921600]
 CMD_TIMEOUT = 3.0
 N_RELAY     = 4
-RL_SEQ_DELAY = 0.65   # delay giua moi relay khi ALL ON/OFF (tranh dong dot bien)
+RL_SEQ_DELAY = 0.65   # delay giữa mỗi relay khi ALL ON/OFF (tránh đóng dồn)
 
 IMG_NAME    = "PDU_device.png"
 FPT_LOGO    = "FPT_logo.png"
-HDR_LOGO_H  = 56   # chieu cao chung cho 2 logo tren header (cho bang nhau)
+HDR_LOGO_H  = 56   # chiều cao chung cho 2 logo trên header (cho bằng nhau)
 
 # ===== Palette =====
 HDR_BG      = "#1b2a38"
@@ -51,9 +51,9 @@ BLUE_HOV    = "#2563eb"
 RL_ON_BG    = "#16a34a"
 RL_OFF_BG   = "#475569"
 
-LED_ACTIVE_LOW = False  # FW da xu ly active-low (LED_ON_LVL=LOW): "LEDn: ON" =
-                        # LED THAT SU SANG. App hien thi truc tiep, khong dao.
-                        # (Can nap lai firmware moi de dong bo dung.)
+LED_ACTIVE_LOW = False  # FW đã xử lý active-low (LED_ON_LVL=LOW): "LEDn: ON" =
+                        # LED THẬT SỰ SÁNG. App hiển thị trực tiếp, không đảo.
+                        # (Cần nạp lại firmware mới để đồng bộ đúng.)
 LED_ON_FILL  = "#22c55e"
 LED_OFF_FILL = "#334155"
 LED_ON_LINE  = "#15803d"
@@ -71,6 +71,7 @@ RX_FW_RESET_RE   = re.compile(r"SYSTEM INIT")
 RX_BTN_ERR_HOLD  = re.compile(r"BT_ERR:\s*HOLD\s*BT([1-4])")
 RX_BTN_ERR_MULTI = re.compile(r"BT_ERR:\s*MULTI")
 RX_DIP_RE        = re.compile(r"DIP:\s*0x([0-9A-Fa-f]+)")
+RX_RS485_BAUD_RE = re.compile(r"RS485 BAUD:\s*(\d+)")
 
 
 def resource_path(name):
@@ -89,11 +90,11 @@ def report_path():
 
 
 # ===== Test sequence =====
-# Moi buoc co "kind":
-#   auto   - gui lenh, kiem chuoi must/must_not (tu dong PASS/FAIL)
-#   led    - bat LED 1->4 lan luot, nguoi dung xac nhan (PASS) / Bo qua (SKIP)
-#   button - nguoi dung nhan BT1->4 (du 4 nut = PASS) / Bo qua (SKIP)
-#   rs485  - gui text qua RS485, doi nhan lai dung text (loopback) / Bo qua
+# Mỗi bước có "kind":
+#   auto   - gửi lệnh, kiểm chuỗi must/must_not (tự động PASS/FAIL)
+#   led    - bật LED 1->4 lần lượt, người dùng xác nhận (PASS) / Bỏ qua (SKIP)
+#   button - người dùng nhấn BT1->4 (đủ 4 nút = PASS) / Bỏ qua (SKIP)
+#   rs485  - gửi text qua RS485, đợi nhận lại đúng text (loopback) / Bỏ qua
 RS485_TEST_TEXT = "Smart PDU RS485 Test"
 TESTS = [
     {"kind": "auto",   "name": "i2c scan (PCA @ 0x38)", "cmd": "i2c",     "wait": 0.6,
@@ -116,9 +117,10 @@ TESTS = [
      "must": ["RL4: ON",  "OK"], "must_not": ["PCA FAIL"]},
     {"kind": "auto",   "name": "Relay 4 OFF", "cmd": "rl 4 off", "wait": 1.0,
      "must": ["RL4: OFF", "OK"], "must_not": ["PCA FAIL"]},
-    {"kind": "led",    "name": "LED 1-4 sang lan luot (xac nhan)"},
-    {"kind": "button", "name": "Nut nhan BT1-4 (nhan tung nut)"},
-    {"kind": "rs485",  "name": "RS485 gui/nhan loopback", "text": RS485_TEST_TEXT},
+    {"kind": "led",    "name": "LED 1-4 sáng lần lượt (xác nhận)"},
+    {"kind": "button", "name": "Nút nhấn BT1-4 (nhấn từng nút)"},
+    {"kind": "dip",    "name": "Dip Switch 1-4 (gạt từng bit)"},
+    {"kind": "rs485",  "name": "RS485 gửi/nhận loopback", "text": RS485_TEST_TEXT},
 ]
 
 
@@ -131,7 +133,7 @@ class SerialWorker:
         self.log_queue  = log_queue
         self._rx_buf    = b""
         self._rx_lock   = threading.Lock()
-        self._cmd_lock  = threading.Lock()   # tranh 2 send_cmd chen nhau
+        self._cmd_lock  = threading.Lock()   # tránh 2 send_cmd chen nhau
         self._stop      = threading.Event()
         self._thread    = None
 
@@ -162,7 +164,7 @@ class SerialWorker:
             try:
                 chunk = self.ser.read(self.ser.in_waiting or 1)
             except Exception:
-                self.log_queue.put(("err", "\n[Mat ket noi serial]\n"))
+                self.log_queue.put(("err", "\n[Mất kết nối serial]\n"))
                 break
             if chunk:
                 with self._rx_lock:
@@ -189,8 +191,8 @@ class SerialWorker:
             self.log_queue.put(("tx", f"> {text}\n"))
 
     def send_cmd(self, cmd, wait=0.5):
-        # Khoa: dam bao 1 lenh hoan tat (clear_rx -> write -> doc het) truoc khi
-        # lenh khac chay -> tranh _query_fw_ver va test 'ver' doc lan phan hoi.
+        # Khóa: đảm bảo 1 lệnh hoàn tất (clear_rx -> write -> đọc hết) trước khi
+        # lệnh khác chạy -> tránh _query_fw_ver và test 'ver' đọc lần phản hồi.
         with self._cmd_lock:
             self.clear_rx()
             self.write_line(cmd)
@@ -240,16 +242,19 @@ class App(tk.Tk):
         self._rx_scan_buf   = ""
         self._btn_down_time = {}
         self._btn_pre_relay = {}
-        self._bt_test_active  = False   # dang chay buoc test nut nhan?
-        self._bt_test_pressed = set()   # cac nut da nhan trong buoc test
-        self._buzzer_muted    = False   # tat tieng bip (test im lang)
+        self._bt_test_active  = False   # đang chạy bước test nút nhấn?
+        self._bt_test_pressed = set()   # các nút đã nhấn trong bước test
+        self._dip_test_active = False   # đang chạy bước test Dip Switch?
+        self._dip_test_seen   = set()   # các bit DIP đã gạt trong bước test
+        self._dip_last_value  = None    # giá trị DIP gần nhất (để so sánh thay đổi)
+        self._buzzer_muted    = False   # tắt tiếng bíp (test im lặng)
 
         self._build_ui()
         self._refresh_ports()
-        # Khoa kich thuoc toi thieu = kich thuoc that su cua noi dung.
-        # Keo nho cua so cung khong the cat/mat noi dung cac the; keo to
-        # thi cac the tu gian ra (expand). Khong dung canvas cuon de tranh
-        # loi remap lam mat noi dung khi keo resize.
+        # Khóa kích thước tối thiểu = kích thước thật sự của nội dung.
+        # Kéo nhỏ cửa sổ cũng không thể cắt/mất nội dung các thẻ; kéo to
+        # thì các thẻ tự giãn ra (expand). Không dùng canvas cuộn để tránh
+        # lỗi remap làm mất nội dung khi kéo resize.
         self.update_idletasks()
         self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
         self.after(50, self._poll_log)
@@ -289,7 +294,7 @@ class App(tk.Tk):
         hdr = tk.Frame(self, bg=HDR_BG)
         hdr.pack(fill="x")
 
-        # Logo thiet bi (PDU_device) - resize ve cung chieu cao voi logo FPT
+        # Logo thiết bị (PDU_device) - resize về cùng chiều cao với logo FPT
         self._logo = None
         try:
             from PIL import Image as _PIL_Image, ImageTk as _PIL_ImageTk
@@ -304,7 +309,7 @@ class App(tk.Tk):
             tk.Label(hdr, image=self._logo, bg=HDR_BG).pack(
                 side="left", padx=(12, 8), pady=8)
         except Exception as _e:
-            # Fallback khong co PIL: subsample theo chieu cao
+            # Fallback không có PIL: subsample theo chiều cao
             try:
                 img = tk.PhotoImage(file=resource_path(IMG_NAME))
                 f = max(1, img.height() // HDR_LOGO_H)
@@ -323,7 +328,7 @@ class App(tk.Tk):
                  bg=HDR_BG, fg=HDR_ACC,
                  font=("Segoe UI", 9)).pack(anchor="w")
 
-        # FPT Telecom logo (ben phai title, truoc controls) -- dung PIL ImageTk
+        # FPT Telecom logo (bên phải title, trước controls) -- dùng PIL ImageTk
         self._fpt_logo = None
         try:
             from PIL import Image as _PIL_Image, ImageTk as _PIL_ImageTk
@@ -342,29 +347,29 @@ class App(tk.Tk):
         except Exception as _e:
             print(f"[FPT logo load failed: {_e}]")
 
-        # ── CONTROL BAR (duoi header: COM / trang thai / Run TEST) ──
+        # ── CONTROL BAR (dưới header: COM / trạng thái / Run TEST) ──
         ctrl = tk.Frame(self, bg="#22384a", padx=12, pady=8)
         ctrl.pack(fill="x")
         tk.Frame(self, bg="#0e1822", height=1).pack(fill="x")
 
         CTRL_BG = "#22384a"
 
-        # Trang thai ket noi (ben phai)
+        # Trạng thái kết nối (bên phải)
         statf = tk.Frame(ctrl, bg=CTRL_BG)
         statf.pack(side="right")
         self._conn_dot, self._conn_dot_oid = _make_dot(statf, 12, CTRL_BG, "#64748b")
         self._conn_dot.pack(side="left", padx=(0, 5))
-        self._lbl_conn = tk.Label(statf, text="Chua ket noi",
+        self._lbl_conn = tk.Label(statf, text="Chưa kết nối",
                                    bg=CTRL_BG, fg="#94a3b8",
                                    font=("Segoe UI", 9, "bold"),
-                                   width=16, anchor="w")   # co dinh -> ko nhay
+                                   width=16, anchor="w")   # cố định -> không nháy
         self._lbl_conn.pack(side="left")
 
         # COM port
         tk.Label(ctrl, text="COM:", bg=CTRL_BG, fg="#94a3b8",
                  font=("Segoe UI", 9)).pack(side="left")
-        # Be rong co dinh + KHONG expand -> khi doi trang thai ket noi, cac
-        # control khong bi co gian/nhay ngang (giao dien dung yen).
+        # Bề rộng cố định + KHÔNG expand -> khi đổi trạng thái kết nối, các
+        # control không bị co giãn/nhảy ngang (giao diện đứng yên).
         self.cbo_port = ttk.Combobox(ctrl, width=46, state="readonly")
         self.cbo_port.pack(side="left", padx=(4, 2))
         tk.Button(ctrl, text="↻", bg="#2d4a62", fg="white",
@@ -377,9 +382,11 @@ class App(tk.Tk):
         self.cbo_baud = ttk.Combobox(ctrl, width=8, state="readonly",
                                       values=[str(b) for b in BAUDRATES])
         self.cbo_baud.set(str(BAUD))
-        self.cbo_baud.pack(side="left", padx=(4, 10))
+        self.cbo_baud.pack(side="left", padx=(4, 2))
+        tk.Label(ctrl, text="(Thiết bị: 115200)", bg=CTRL_BG, fg="#f59e0b",
+                 font=("Segoe UI", 8)).pack(side="left", padx=(0, 10))
 
-        self.btn_conn = self._flat_btn(ctrl, "Ket noi", BLUE_BTN, hover=BLUE_HOV,
+        self.btn_conn = self._flat_btn(ctrl, "Kết Nối", BLUE_BTN, hover=BLUE_HOV,
                                         font_size=9, padx=14, pady=4, width=14,
                                         raised=True, command=self._toggle_conn)
         self.btn_conn.pack(side="left", padx=(0, 10))
@@ -411,6 +418,11 @@ class App(tk.Tk):
             tk.Label(info_bar, text="|", bg=WHITE, fg="#cbd5e1",
                      font=("Segoe UI", 9)).pack(side="left", padx=6)
 
+        #  Ghi chú baud chuẩn của thiết bị (tránh chọn đúng COM nhưng sai baud)
+        tk.Label(info_bar, text="Baud thiết bị: Console 115200",
+                 bg=WHITE, fg="#e8833a", font=("Segoe UI", 9, "bold"),
+                 padx=4, pady=3).pack(side="left")
+
         # ── BODY ─────────────────────────────────────────────
         body = tk.Frame(self, bg=MAIN_BG)
         body.pack(fill="both", expand=True)
@@ -423,7 +435,7 @@ class App(tk.Tk):
         top_row.pack(fill="x", padx=10, pady=(10, 8))
 
         # ── RELAY CHANNEL CARDS ──────────────────────────────
-        rc_body = self._card(top_row, "DIEU KHIEN RELAY",
+        rc_body = self._card(top_row, "Điều Khiển Relay",
                               side="left", fill="both", expand=True, padx=(0, 8))
         ch_row = tk.Frame(rc_body, bg=WHITE, padx=10, pady=10)
         ch_row.pack(expand=True)
@@ -463,7 +475,7 @@ class App(tk.Tk):
 
             tk.Frame(cf, bg=CARD_BD, height=1).pack(fill="x", pady=4)
 
-            # LED: nut bam noi 3D (relief raised) -> click de test bat/tat LED.
+            # LED: nút bấm nổi 3D (relief raised) -> click để test bật/tắt LED.
             lr = tk.Frame(cf, bg=CARD_BG, relief="raised", bd=2, cursor="hand2")
             lr.pack(pady=3, anchor="w", ipadx=4, ipady=2)
             cl = tk.Canvas(lr, width=16, height=16, bg=CARD_BG,
@@ -482,7 +494,7 @@ class App(tk.Tk):
                                               self._toggle_led(n)))
             self.led_ind[i] = (cl, ol)
 
-            # Trang thai NUT NHAN cua kenh nay (gop vao the DIEU KHIEN RELAY)
+            # Trạng thái NÚT NHẤN của kênh này (gộp vào thẻ ĐIỀU KHIỂN RELAY)
             br = tk.Frame(cf, bg=CARD_BG)
             br.pack(pady=3, anchor="w")
             cb = tk.Canvas(br, width=14, height=14, bg=CARD_BG,
@@ -496,83 +508,82 @@ class App(tk.Tk):
             self.btn_ind[i] = (cb, ob, bt_lbl)
 
         # ── QUICK ACTIONS ─────────────────────────────────────
-        qa_body = self._card(top_row, "THAO TAC NHANH",
+        qa_body = self._card(top_row, "Thao Tác Nhanh",
                               side="left", fill="both", expand=True, padx=(0, 8))
         qa = tk.Frame(qa_body, bg=WHITE, padx=14, pady=12)
         qa.pack(fill="both", expand=True)
 
         self.btn_all_on = self._flat_btn(
-            qa, "ALL ON", "#22c55e", hover="#16a34a",
+            qa, "All On", "#22c55e", hover="#16a34a",
             font_size=10, padx=14, pady=10, state="disabled", raised=True,
             command=lambda: self._relay_all(True))
         self.btn_all_on.pack(fill="x", pady=3)
 
         self.btn_all_off = self._flat_btn(
-            qa, "ALL OFF", "#ef4444", hover="#dc2626",
+            qa, "All Off", "#ef4444", hover="#dc2626",
             font_size=10, padx=14, pady=10, state="disabled", raised=True,
             command=lambda: self._relay_all(False))
         self.btn_all_off.pack(fill="x", pady=3)
 
-        # Nut noi 3D (relief raised) dong bo voi cac nut khac tren giao dien
+        # Nút nổi 3D (relief raised) đồng bộ với các nút khác trên giao diện
         self.btn_rls = self._flat_btn(
             qa, "Sync Status Relay", "#64748b", hover="#475569",
             font_size=9, padx=8, pady=8, raised=True, state="disabled",
             command=self._push_relay_state)
         self.btn_rls.pack(fill="x", pady=3)
 
-        # Nut bat/tat tieng bip (test im lang) - dung duoc ca khi chua ket noi
+        # Nút bật/tắt tiếng bíp (test im lặng) - dùng được cả khi chưa kết nối
         self.btn_mute = self._flat_btn(
             qa, "Beep ON", BLUE_BTN, hover=BLUE_HOV,
             font_size=9, padx=8, pady=8, raised=True,
             command=self._toggle_mute)
         self.btn_mute.pack(fill="x", pady=3)
 
-        # ── TEST CHUC NANG CHUNG (i2c, flash, dip switch) ─────
-        fn_body = self._card(top_row, "TEST CHUC NANG CHUNG",
+        # ── TEST CHỨC NĂNG CHUNG (I2C, Flash, DIP Switch) ─────
+        fn_body = self._card(top_row, "Test Chức Năng Chung",
                              side="left", fill="both", expand=True)
-        fn = tk.Frame(fn_body, bg=WHITE, padx=12, pady=10)
+        # Các nhãn kết quả đặt width cố định (theo số ký tự) -> nội dung thay
+        # đổi không làm thẻ bị co giãn/nhảy layout.
+        fn = tk.Frame(fn_body, bg=WHITE, padx=12, pady = 10)
         fn.pack(fill="both", expand=True)
 
-        def _fn_row(label_default):
-            row = tk.Frame(fn, bg=WHITE)
-            row.pack(fill="x", pady=3)
-            return row
-
         # --- I2C ---
-        r1 = _fn_row(None)
+        r1 = tk.Frame(fn, bg=WHITE)
+        r1.pack(fill="x", pady=3)
         self.btn_test_i2c = self._flat_btn(
-            r1, "Test I2C", BLUE_BTN, hover=BLUE_HOV, font_size=9,
+            r1, "Scan I2C", BLUE_BTN, hover=BLUE_HOV, font_size=9,
             padx=10, pady=5, width=9, raised=True, state="disabled",
             command=self._test_i2c)
         self.btn_test_i2c.pack(side="left")
-        self.lbl_i2c = tk.Label(r1, text="dia chi: --", bg=WHITE, fg="#475569",
-                                font=("Segoe UI", 9), anchor="w")
+        self.lbl_i2c = tk.Label(r1, text="ADDR: --", bg=WHITE, fg="#475569",
+                                font=("Segoe UI", 9), width=18, anchor="w",
+                                justify="left", wraplength=150)
         self.lbl_i2c.pack(side="left", padx=(8, 0))
 
         # --- FLASH ---
-        r2 = _fn_row(None)
+        r2 = tk.Frame(fn, bg=WHITE)
+        r2.pack(fill="x", pady=3)
         self.btn_test_flash = self._flat_btn(
             r2, "Test Flash", BLUE_BTN, hover=BLUE_HOV, font_size=9,
             padx=10, pady=5, width=9, raised=True, state="disabled",
             command=self._test_flash)
         self.btn_test_flash.pack(side="left")
         self.lbl_flash = tk.Label(r2, text="--", bg=WHITE, fg="#475569",
-                                  font=("Segoe UI", 9), anchor="w")
+                                  font=("Segoe UI", 9), width=18, anchor="w")
         self.lbl_flash.pack(side="left", padx=(8, 0))
 
-        # --- DIP SWITCH ---
+        # --- DIP Switch (tự động cập nhật từ thiết bị, không cần nút test) ---
         tk.Frame(fn, bg=CARD_BD, height=1).pack(fill="x", pady=(6, 2))
-        r3 = _fn_row(None)
-        self.btn_test_dip = self._flat_btn(
-            r3, "Test DIP", BLUE_BTN, hover=BLUE_HOV, font_size=9,
-            padx=10, pady=5, width=9, raised=True, state="disabled",
-            command=self._test_dip)
-        self.btn_test_dip.pack(side="left")
-        self.lbl_dip_addr = tk.Label(r3, text="dia chi: --", bg=WHITE, fg="#1e293b",
-                                     font=("Segoe UI", 9, "bold"), anchor="w")
-        self.lbl_dip_addr.pack(side="left", padx=(8, 0))
+        r3 = tk.Frame(fn, bg=WHITE)
+        r3.pack(fill="x", pady=3)
+        tk.Label(r3, text="Dip Switch:", bg=WHITE, fg="#475569",
+                 font=("Segoe UI", 9, "bold")).pack(side="left")
+        self.lbl_dip_addr = tk.Label(r3, text="ADDR: --", bg=WHITE, fg="#1e293b",
+                                     font=("Segoe UI", 9, "bold"), width=20,
+                                     anchor="w")
+        self.lbl_dip_addr.pack(side="left", padx=(6, 0))
 
-        # DIP 4 bit hien thi truc tiep (giong nut nhan, cap nhat khi gat switch)
+        # DIP 4 bit hiển thị trực tiếp (tự động cập nhật khi gạt switch)
         dipf = tk.Frame(fn, bg=WHITE)
         dipf.pack(fill="x", pady=(4, 0))
         self.dip_ind = {}
@@ -587,22 +598,40 @@ class App(tk.Tk):
                      font=("Segoe UI", 8)).pack()
             self.dip_ind[b] = (dot, oid)
 
-        # ── TEST RS485 (thu cong: gui text + loopback) ────────
-        rs_body = self._card(top_row, "TEST RS485",
+        # ── TEST RS485 (thủ công: gửi text + loopback) ────────
+        rs_body = self._card(top_row, "Test RS485",
                              side="left", fill="both", expand=True, padx=(8, 0))
         rs = tk.Frame(rs_body, bg=WHITE, padx=14, pady=12)
         rs.pack(fill="both", expand=True)
-        tk.Label(rs, text="Text gui qua RS485:", bg=WHITE, fg="#6b7280",
+        # Đổi baud RS485 ngay trong thẻ (gửi "baud rs485 <n>" + cập nhật hiển thị)
+        brow = tk.Frame(rs, bg=WHITE)
+        brow.pack(fill="x")
+        tk.Label(brow, text="Baud RS485:", bg=WHITE, fg="#6b7280",
+                 font=("Segoe UI", 9)).pack(side="left")
+        self.cbo_rs485_baud = ttk.Combobox(brow, width=8, state="readonly",
+                                           values=[str(b) for b in BAUDRATES])
+        self.cbo_rs485_baud.set("9600")
+        self.cbo_rs485_baud.pack(side="left", padx=(4, 4))
+        self.btn_rs485_baud = self._flat_btn(
+            brow, "Đặt", BLUE_BTN, hover=BLUE_HOV, font_size=8,
+            padx=10, pady=3, raised=True, state="disabled",
+            command=self._set_rs485_baud)
+        self.btn_rs485_baud.pack(side="left")
+        # Baud RS485 hiện tại (hiển thị động)
+        self.lbl_rs485_baud = tk.Label(rs, text="Baud RS485: 9600", bg=WHITE,
+                                       fg="#e8833a", font=("Segoe UI", 8, "bold"))
+        self.lbl_rs485_baud.pack(anchor="w", pady=(2, 6))
+        tk.Label(rs, text="Text gửi qua RS485:", bg=WHITE, fg="#6b7280",
                  font=("Segoe UI", 9)).pack(anchor="w")
         self.ent_rs485 = tk.Entry(rs, font=("Segoe UI", 10), relief="solid", bd=1)
         self.ent_rs485.insert(0, RS485_TEST_TEXT)
         self.ent_rs485.pack(fill="x", pady=(2, 8))
         self.btn_rs485 = self._flat_btn(
-            rs, "Gui & Test Loopback", BLUE_BTN, hover=BLUE_HOV,
+            rs, "Gửi & Test Loopback", BLUE_BTN, hover=BLUE_HOV,
             font_size=10, padx=14, pady=8, state="disabled",
             raised=True, command=self._rs485_manual_test)
         self.btn_rs485.pack(fill="x")
-        self.lbl_rs485 = tk.Label(rs, text="Chua test", bg=WHITE, fg="#6b7280",
+        self.lbl_rs485 = tk.Label(rs, text="Chưa test", bg=WHITE, fg="#6b7280",
                                    font=("Segoe UI", 9), wraplength=200,
                                    justify="left")
         self.lbl_rs485.pack(anchor="w", pady=(8, 0))
@@ -612,7 +641,7 @@ class App(tk.Tk):
         bot_row.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         # KET QUA TEST
-        tr_body = self._card(bot_row, "KET QUA TEST",
+        tr_body = self._card(bot_row, "Kết Quả Test",
                               side="left", fill="both", expand=True, padx=(0, 8))
         tf = tk.Frame(tr_body, bg=WHITE, padx=6, pady=6)
         tf.pack(fill="both", expand=True)
@@ -620,7 +649,7 @@ class App(tk.Tk):
         self.tree = ttk.Treeview(tf, columns=("res",), show="tree headings",
                                   selectmode="none", height=8)
         self.tree.heading("#0", text="Test")
-        self.tree.heading("res", text="Ket qua")
+        self.tree.heading("res", text="Kết quả")
         self.tree.column("#0", width=210)
         self.tree.column("res", width=80, anchor="center")
         self.tree.tag_configure("pass", foreground="#16a34a")
@@ -632,7 +661,7 @@ class App(tk.Tk):
         sb_t.pack(side="right", fill="y")
         self.tree.pack(fill="both", expand=True)
 
-        self.lbl_sum = tk.Label(tr_body, text="Chua chay test",
+        self.lbl_sum = tk.Label(tr_body, text="Chưa chạy test",
                                  bg=WHITE, fg="#6b7280",
                                  font=("Segoe UI", 9), pady=6, padx=8, anchor="w")
         self.lbl_sum.pack(fill="x")
@@ -644,17 +673,17 @@ class App(tk.Tk):
 
         tm_hdr = tk.Frame(tm_outer, bg=WHITE, padx=12, pady=8)
         tm_hdr.pack(fill="x")
-        tk.Label(tm_hdr, text="TERMINAL",
+        tk.Label(tm_hdr, text="Terminal",
                  bg=WHITE, fg=BLUE_ACC,
                  font=("Segoe UI", 10, "bold")).pack(side="left")
-        tk.Button(tm_hdr, text="XOA LOG",
+        tk.Button(tm_hdr, text="Xóa Log",
                   bg=WHITE, fg="#6b7280",
                   activebackground="#f1f5f9", relief="solid", bd=1,
                   font=("Segoe UI", 8), padx=6, pady=1,
                   command=self._clear_log).pack(side="right")
         tk.Frame(tm_outer, bg=CARD_BD, height=1).pack(fill="x")
 
-        # Input bar: pack TRUOC txt de khong bi expand=True cua txt day ra ngoai
+        # Input bar: pack TRƯỚC txt để không bị expand=True của txt đẩy ra ngoài
         inp = tk.Frame(tm_outer, bg="#1e293b", padx=8, pady=6)
         inp.pack(side="bottom", fill="x")
         tk.Label(inp, text=">", bg="#1e293b", fg="#22c55e",
@@ -665,7 +694,7 @@ class App(tk.Tk):
                                 relief="flat", bd=0)
         self.ent_cmd.pack(side="left", fill="x", expand=True, ipady=4)
         self.ent_cmd.bind("<Return>", self._send_manual)
-        self._flat_btn(inp, "Gui", BLUE_BTN, hover=BLUE_HOV,
+        self._flat_btn(inp, "Gửi", BLUE_BTN, hover=BLUE_HOV,
                         font_size=9, bold=True, padx=12, pady=4,
                         raised=True,
                         command=self._send_manual).pack(side="left", padx=(8, 0))
@@ -686,7 +715,7 @@ class App(tk.Tk):
         sb_bar = tk.Frame(self, bg=HDR_BG, pady=3)
         sb_bar.pack(fill="x", side="bottom")
         tk.Frame(sb_bar, bg="#253445", height=1).pack(fill="x", side="top")
-        self.lbl_status = tk.Label(sb_bar, text="* Chua ket noi",
+        self.lbl_status = tk.Label(sb_bar, text="* Chưa kết nối",
                                     bg=HDR_BG, fg="#64748b",
                                     font=("Segoe UI", 8), padx=12)
         self.lbl_status.pack(side="left")
@@ -704,20 +733,20 @@ class App(tk.Tk):
         self.btn_all_on.config(state=st)
         self.btn_all_off.config(state=st)
         self.btn_rls.config(state=st)
-        for _b in ("btn_rs485", "btn_test_i2c", "btn_test_flash", "btn_test_dip"):
+        for _b in ("btn_rs485", "btn_rs485_baud", "btn_test_i2c", "btn_test_flash"):
             if hasattr(self, _b):
                 getattr(self, _b).config(state=st)
 
     def _rs485_manual_test(self):
-        """Gui text trong o RS485 qua bus, kiem tra co vong ve (loopback)."""
+        """Gửi text trong ô RS485 qua bus, kiểm tra có vòng về (loopback)."""
         if self.testing:
             return
         if not self.worker.is_open:
-            messagebox.showwarning(APP_TITLE, "Chua ket noi COM port")
+            messagebox.showwarning(APP_TITLE, "Chưa kết nối COM port")
             return
         text = self.ent_rs485.get().strip() or RS485_TEST_TEXT
         self.btn_rs485.config(state="disabled")
-        self.lbl_rs485.config(text="Dang gui...", fg="#2563eb")
+        self.lbl_rs485.config(text="Đang gửi...", fg="#2563eb")
 
         def _do():
             self.worker.clear_rx()
@@ -729,18 +758,18 @@ class App(tk.Tk):
                     state="normal" if (self.worker.is_open and not self.testing)
                     else "disabled")
                 if ok:
-                    self.lbl_rs485.config(text="OK - nhan dung text vong ve",
+                    self.lbl_rs485.config(text="OK - nhận đúng text vòng về",
                                           fg="#16a34a")
                 else:
                     self.lbl_rs485.config(
-                        text="FAIL - khong nhan duoc\n(can loopback A-B / TX-RX)",
+                        text="FAIL - không nhận được\n(có thể loopback A-B / TX-RX)",
                         fg="#dc2626")
             self.after(0, upd)
 
         threading.Thread(target=_do, daemon=True).start()
 
     def _toggle_mute(self):
-        """Bat/tat tieng bip tren thiet bi (test im lang)."""
+        """Bat/tat tiếng bip trên thiết bị (test im lặng)."""
         self._buzzer_muted = not self._buzzer_muted
         if self.worker.is_open:
             self.worker.write_line("beep off" if self._buzzer_muted else "beep on")
@@ -755,13 +784,13 @@ class App(tk.Tk):
                                  activebackground=BLUE_HOV)
 
     # ----------------------------------------------------------
-    #  TEST CHUC NANG CHUNG (i2c / flash / dip switch)
+    #  TEST CHUNG (I2C / Flash / Dip Switch)
     # ----------------------------------------------------------
     def _test_i2c(self):
         if self.testing or not self.worker.is_open:
             return
         self.btn_test_i2c.config(state="disabled")
-        self.lbl_i2c.config(text="dang quet...", fg="#2563eb")
+        self.lbl_i2c.config(text="đang quét...", fg="#2563eb")
 
         def _do():
             resp = self.worker.send_cmd("i2c", 0.6)
@@ -772,10 +801,10 @@ class App(tk.Tk):
                     state="normal" if (self.worker.is_open and not self.testing)
                     else "disabled")
                 if addrs:
-                    self.lbl_i2c.config(text="dia chi: " + ", ".join(addrs),
+                    self.lbl_i2c.config(text="ADDR: " + ", ".join(addrs),
                                         fg="#16a34a")
                 else:
-                    self.lbl_i2c.config(text="khong thay thiet bi I2C",
+                    self.lbl_i2c.config(text="không thấy thiết bị I2C",
                                         fg="#dc2626")
             self.after(0, upd)
         threading.Thread(target=_do, daemon=True).start()
@@ -784,7 +813,7 @@ class App(tk.Tk):
         if self.testing or not self.worker.is_open:
             return
         self.btn_test_flash.config(state="disabled")
-        self.lbl_flash.config(text="dang test...", fg="#2563eb")
+        self.lbl_flash.config(text="đang test...", fg="#2563eb")
 
         def _do():
             resp = self.worker.send_cmd("fwr", 1.5)
@@ -795,29 +824,8 @@ class App(tk.Tk):
                     state="normal" if (self.worker.is_open and not self.testing)
                     else "disabled")
                 self.lbl_flash.config(
-                    text="OK (ghi/doc dat)" if ok else "FAIL",
+                    text="OK (ghi/đọc đạt)" if ok else "FAIL",
                     fg="#16a34a" if ok else "#dc2626")
-            self.after(0, upd)
-        threading.Thread(target=_do, daemon=True).start()
-
-    def _test_dip(self):
-        if self.testing or not self.worker.is_open:
-            return
-        self.btn_test_dip.config(state="disabled")
-
-        def _do():
-            resp = self.worker.send_cmd("dip", 0.4)
-            m = RX_DIP_RE.search(resp)
-            val = int(m.group(1), 16) if m else None
-
-            def upd():
-                self.btn_test_dip.config(
-                    state="normal" if (self.worker.is_open and not self.testing)
-                    else "disabled")
-                if val is not None:
-                    self._update_dip(val)
-                else:
-                    self.lbl_dip_addr.config(text="dia chi: doc loi", fg="#dc2626")
             self.after(0, upd)
         threading.Thread(target=_do, daemon=True).start()
 
@@ -829,10 +837,10 @@ class App(tk.Tk):
         d, doid, lbl = self._rl_status[n]
         if on:
             d.itemconfig(doid, fill="#22c55e")
-            lbl.config(text="DANG BAT", fg="#16a34a")
+            lbl.config(text="ĐANG BẬT", fg="#16a34a")
         else:
             d.itemconfig(doid, fill="#94a3b8")
-            lbl.config(text="DANG TAT", fg="#94a3b8")
+            lbl.config(text="ĐANG TẮT", fg="#94a3b8")
         for i in range(1, N_RELAY + 1):
             self._update_led_ind(i, self.relay_state[i])
 
@@ -859,7 +867,7 @@ class App(tk.Tk):
         self._rl_busy_until = time.time() + 0.6
         target = not self.relay_state[n]
         self.worker.write_line(f"rl {n} {'on' if target else 'off'}")
-        # LED do firmware tu dieu khien bam theo trang thai relay (led_update).
+        # LED do firmware tu dieu khien bấm theo trang thai relay (led_update).
         self._update_relay_btn(n, target)
 
     def _push_relay_state(self):
@@ -868,14 +876,14 @@ class App(tk.Tk):
         if time.time() < self._rl_busy_until:
             return
         self._rl_busy_until = time.time() + N_RELAY * 0.65 + 0.5
-        self._log("[Sync trang thai relay tu app xuong thiet bi...]\n", "tx")
+        self._log("[Sync trạng thái relay từ app xuống thiết bị...]\n", "tx")
         for i in range(1, N_RELAY + 1):
             self.worker.write_line(f"rl {i} {'on' if self.relay_state[i] else 'off'}")
 
     def _relay_all(self, on):
-        """Dieu khien tuan tu relay 1->4, delay RL_SEQ_DELAY giua moi relay.
-        Tranh tang dong dot bien cho nguon cap relay (latching relay pulse 500ms/cai).
-        Chay trong thread rieng, nut ALL ON/OFF disable trong luc chay."""
+        """Điều khiển tuần tự relay 1->4, delay RL_SEQ_DELAY giữa mỗi relay.
+        Tránh tăng dòng đột biến cho nguồn cấp relay (latching relay pulse 500ms/cái).
+        Chạy trong thread riêng, nút ALL ON/OFF disable trong lúc chạy."""
         if self.testing or not self.worker.is_open:
             return
         if time.time() < self._rl_busy_until:
@@ -913,15 +921,15 @@ class App(tk.Tk):
         threading.Thread(target=_do, daemon=True).start()
 
     def _sync_state_from_device(self):
-        """Khi ket noi: doc trang thai relay tu thiet bi (rls) va cap nhat
-        hien thi relay + LED tren app cho khop (LED bam theo trang thai relay)."""
+        """Khi kết nối: đọc trạng thái relay từ thiết bị (rls) và cập nhật
+        hiển thị relay + LED trên app cho khớp (LED bấm theo trạng thái relay)."""
         if not self.worker.is_open or self.testing:
             return
         def _do():
             resp = self.worker.send_cmd("rls", 0.5)
             states = {int(m.group(1)): (m.group(2) == "ON")
                       for m in RX_RELAY_RE.finditer(resp)}
-            dresp = self.worker.send_cmd("dip", 0.4)        # doc DIP switch hien tai
+            dresp = self.worker.send_cmd("dip", 0.4)        # đọc DIP Switch hiện tại
             dm = RX_DIP_RE.search(dresp)
             dval = int(dm.group(1), 16) if dm else None
 
@@ -930,7 +938,7 @@ class App(tk.Tk):
                     self._update_relay_btn(n, s)
                 if dval is not None:
                     self._update_dip(dval)
-                self._log("[Da dong bo trang thai relay/LED/DIP tu thiet bi]\n", "tx")
+                self._log("[Đã đồng bộ trạng thái relay/LED/Dip Switch từ thiết bị]\n", "tx")
             if states or dval is not None:
                 self.after(0, _apply)
         threading.Thread(target=_do, daemon=True).start()
@@ -951,44 +959,44 @@ class App(tk.Tk):
     def _set_btn_error(self, n):
         c, oid, lbl = self.btn_ind[n]
         c.itemconfig(oid, fill="#ef4444", outline="#dc2626")
-        lbl.config(text=f"BT {n}: Loi/Timeout", fg="#ef4444")
+        lbl.config(text=f"BT {n}: Lỗi", fg="#ef4444")
 
     def _on_firmware_reset(self):
         self._btn_down_time.clear()
         self._btn_pre_relay.clear()
         for i in range(1, N_RELAY + 1):
             self._update_relay_btn(i, False)
-        self._log("[Firmware da reset - trang thai relay ve OFF]\n", "err")
+        self._log("[Firmware đã reset - trạng thái relay về OFF]\n", "err")
 
     def _scan_relay_rx(self, text):
         if RX_FW_RESET_RE.search(text):
             self._on_firmware_reset()
             return
 
-        # Relay do FIRMWARE dieu khien khi giu/nha nut (giu [1s,3s) moi dao;
-        # giu qua lau/nhieu nut = loi, KHONG dao). App chi hien thi trang thai
-        # nut va cap nhat relay qua thong bao "RLn:" tu firmware -> khong tu
-        # gui lenh relay o day de tranh dieu khien trung.
+        # Relay do FIRMWARE điều khiển khi giữ/nhả nút (giữ [1s,3s) mới đảo;
+        # giữ quá lâu/nhiều nút = lỗi, KHÔNG đảo). App chỉ hiển thị trạng thái
+        # nút và cập nhật relay qua thông báo "RLn:" từ firmware -> không tự
+        # gửi lệnh relay ở đây để tránh điều khiển trùng.
         for m in RX_BTN_RE.finditer(text):
             n    = int(m.group(1))
             down = (m.group(2) == "DOWN")
             self._update_btn_ind(n, down)
             if down and self._bt_test_active:
-                self._bt_test_pressed.add(n)   # ghi nhan cho buoc test nut
+                self._bt_test_pressed.add(n)   # ghi nhận cho bước test nút
 
         for m in RX_BTN_ERR_HOLD.finditer(text):
             n = int(m.group(1))
             self._btn_down_time.pop(n, None)
             self._btn_pre_relay.pop(n, None)
             self._set_btn_error(n)
-            self._log(f"[BT{n}: Giu qua lau - khong dieu khien relay]\n", "err")
+            self._log(f"[BT{n}: Giữ quá lâu - không điều khiển relay]\n", "err")
 
         if RX_BTN_ERR_MULTI.search(text):
             self._btn_down_time.clear()
             self._btn_pre_relay.clear()
             for i in range(1, N_RELAY + 1):
                 self._set_btn_error(i)
-            self._log("[BT_ERR: Nhan nhieu nut - khong dieu khien relay]\n", "err")
+            self._log("[BT_ERR: Nhấn nhiều nút - không điều khiển relay]\n", "err")
 
         for m in RX_RELAY_RE.finditer(text):
             self._update_relay_btn(int(m.group(1)), m.group(2) == "ON")
@@ -996,10 +1004,36 @@ class App(tk.Tk):
             _gpio_on = m.group(2) == "ON"
             self._update_led_ind(int(m.group(1)), not _gpio_on if LED_ACTIVE_LOW else _gpio_on)
         for m in RX_DIP_RE.finditer(text):
-            self._update_dip(int(m.group(1), 16))
+            val = int(m.group(1), 16)
+            # Trong bước test DIP: ghi nhận bit nào vừa THAY ĐỔI (gạt)
+            if self._dip_test_active and self._dip_last_value is not None:
+                changed = self._dip_last_value ^ val
+                for b in range(1, 5):
+                    if changed & (1 << (b - 1)):
+                        self._dip_test_seen.add(b)
+            self._dip_last_value = val
+            self._update_dip(val)
+        for m in RX_RS485_BAUD_RE.finditer(text):
+            self._set_rs485_baud_display(m.group(1))
+
+    def _set_rs485_baud_display(self, baud):
+        """Cập nhật baud RS485 ở thẻ Test RS485 (nhãn + ô chọn)."""
+        baud = str(baud)
+        self.lbl_rs485_baud.config(text=f"Baud RS485: {baud} ")
+        if hasattr(self, "cbo_rs485_baud") and baud in self.cbo_rs485_baud["values"]:
+            self.cbo_rs485_baud.set(baud)
+
+    def _set_rs485_baud(self):
+        """Đổi baud RS485 trên thiết bị từ ô chọn trong thẻ Test RS485."""
+        if self.testing or not self.worker.is_open:
+            return
+        baud = self.cbo_rs485_baud.get()
+        self.worker.write_line(f"baud rs485 {baud}")
+        self._set_rs485_baud_display(baud)
+        self._log(f"[Đổi baud RS485 -> {baud}]\n", "tx")
 
     def _update_dip(self, value):
-        """Cap nhat hien thi DIP switch (4 bit + dia chi) khi gat switch."""
+        """Cập nhật hiển thị DIP Switch (4 bit + địa chỉ) khi gạt switch."""
         bits = []
         for b in range(1, 5):
             on = bool(value & (1 << (b - 1)))    # bit0 = BIT1
@@ -1007,9 +1041,9 @@ class App(tk.Tk):
             dot.itemconfig(oid, fill="#22c55e" if on else "#cbd5e1",
                            outline="#15803d" if on else "#94a3b8")
             bits.append("1" if on else "0")
-        # bits hien thi BIT1..BIT4 trai->phai; dia chi = gia tri 4-bit
+        # bits hiển thị BIT1..BIT4 trái->phải; địa chỉ = giá trị 4-bit
         self.lbl_dip_addr.config(
-            text=f"dia chi: 0x{value:X} ({value})  [b{''.join(bits)}]")
+            text=f"ADDR: 0x{value:X} ({value}) b{''.join(bits)}")
 
     # ----------------------------------------------------------
     #  COM port
@@ -1029,34 +1063,34 @@ class App(tk.Tk):
         if self.worker.is_open:
             self.worker.close()
             self._rx_scan_buf = ""
-            self.btn_conn.config(text="Ket noi", bg=BLUE_BTN,
+            self.btn_conn.config(text="Kết Nối", bg=BLUE_BTN,
                                   activebackground=BLUE_HOV)
             self.btn_run.config(state="disabled")
             self._set_relay_ctrl_state(False)
             self._conn_dot.itemconfig(self._conn_dot_oid, fill="#64748b")
-            self._lbl_conn.config(text="Chua ket noi", fg="#94a3b8")
-            self.lbl_status.config(text="* Chua ket noi", fg="#64748b")
+            self._lbl_conn.config(text="Chưa kết nối", fg="#94a3b8")
+            self.lbl_status.config(text="* Chưa kết nối", fg="#64748b")
             self._dev_info["Firmware:"].config(text="--")
             return
 
         port = self._sel_port()
         if not port:
-            messagebox.showwarning(APP_TITLE, "Chua chon COM port")
+            messagebox.showwarning(APP_TITLE, "Chưa chọn COM port")
             return
         baud = int(self.cbo_baud.get() or BAUD)
         try:
             self.worker.open(port, baud)
         except serial.SerialException as e:
-            messagebox.showerror(APP_TITLE, f"Khong mo duoc {port}:\n{e}")
+            messagebox.showerror(APP_TITLE, f"Không mở được {port}:\n{e}")
             return
 
-        # Mo cong xong -> XAC THUC ID truoc khi cho dieu khien (tranh nham cong COM)
-        self._lbl_conn.config(text="Dang kiem tra...", fg="#f59e0b")
+        # Mở cổng xong -> XÁC THỰC ID trước khi cho điều khiển (tránh nhầm cổng COM)
+        self._lbl_conn.config(text="Đang kiểm tra...", fg="#f59e0b")
         self._conn_dot.itemconfig(self._conn_dot_oid, fill="#f59e0b")
-        self.lbl_status.config(text=f"* {port}: dang xac thuc thiet bi...",
+        self.lbl_status.config(text=f"* {port}: đang xác thực thiết bị...",
                                fg="#f59e0b")
         self.btn_conn.config(state="disabled")
-        self._log(f"[Mo {port} @ {baud} - kiem tra ID thiet bi...]\n", "tx")
+        self._log(f"[Mở {port} @ {baud} - kiểm tra ID thiết bị...]\n", "tx")
 
         def _verify():
             resp = self.worker.send_cmd("id", 0.6)
@@ -1067,38 +1101,45 @@ class App(tk.Tk):
     def _on_verify_result(self, ok, port, baud):
         self.btn_conn.config(state="normal")
         if not self.worker.is_open:
-            return    # nguoi dung da ngat trong luc kiem tra
+            return    # người dùng đã ngắt trong lúc kiểm tra
         if not ok:
-            # SAI thiet bi / nham cong COM -> dong cong, canh bao
+            # SAI thiết bi / nhầm cổng COM -> đóng cổng, cảnh báo
             self.worker.close()
-            self.btn_conn.config(text="Ket noi", bg=BLUE_BTN,
+            self.btn_conn.config(text="Kết Nối", bg=BLUE_BTN,
                                   activebackground=BLUE_HOV)
             self._conn_dot.itemconfig(self._conn_dot_oid, fill="#ef4444")
-            self._lbl_conn.config(text="SAI thiet bi!", fg="#ef4444")
+            self._lbl_conn.config(text="SAI thiết bị/baud!", fg="#ef4444")
             self.lbl_status.config(
-                text=f"* {port}: KHONG phai Smart PDU", fg="#ef4444")
-            self._log(f"[{port} KHONG phai Smart PDU - da ngat]\n", "err")
+                text=f"* {port} @ {baud}: không nhận đúng Smart PDU 2.0",
+                fg="#ef4444")
+            self._log(f"[{port} @ {baud} không phản hồi đúng ID - đã ngắt]\n",
+                      "err")
             messagebox.showwarning(
                 APP_TITLE,
-                f"Cong {port} KHONG phai thiet bi Smart PDU 2.0!\n\n"
-                "Co the ban chon nham cong COM. Hay kiem tra lai.")
+                f"Cổng {port} @ {baud} KHÔNG nhận đúng thiết bị Smart PDU 2.0!\n\n"
+                "Nguyên nhân có thể:\n"
+                f"  - Chọn nhầm cổng COM (không phải thiết bị này)\n"
+                f"  - SAI baud rate: thiết bị dùng Console 115200\n\n"
+                "Hãy kiểm tra lại cổng COM và đặt baud = 115200.")
             return
 
-        # DUNG thiet bi -> hoan tat ket noi
-        self.btn_conn.config(text="Ngat ket noi", bg="#ef4444",
+        # ĐÚNG thiết bị -> hoàn tất kết nối
+        self.btn_conn.config(text="Ngắt Kết Nối", bg="#ef4444",
                               activebackground="#dc2626")
         self.btn_run.config(state="normal")
         self._set_relay_ctrl_state(True)
         self._conn_dot.itemconfig(self._conn_dot_oid, fill="#22c55e")
         self._lbl_conn.config(text="✓ Smart PDU 2.0", fg="#22c55e")
         self.lbl_status.config(
-            text=f"* Dung thiet bi Smart PDU 2.0  |  {port} @ {baud}",
+            text=f"* Đã kết nối thiết bị Smart PDU 2.0  |  {port} @ {baud}",
             fg="#16a34a")
         self._dev_info["Baud:"].config(text=str(baud))
-        self._log(f"[Xac thuc OK - Smart PDU 2.0 tren {port} @ {baud}]\n", "tx")
-        # Dong bo trang thai tat/bat tieng bip xuong thiet bi
+        self._log(f"[Xác thực OK - Smart PDU 2.0 trên {port} @ {baud}]\n", "tx")
+        # Đồng bộ trạng thái tắt/bật tiếng bip xuống thiết bị
         self.worker.write_line("beep off" if self._buzzer_muted else "beep on")
-        # Doc firmware truoc (luc thiet bi con ranh), sau do moi sync relay.
+        # Truy vấn baud RS485 hiện tại để hiển thị động
+        self.worker.write_line("baud")
+        # Đọc firmware trước (lúc thiết bị còn rảnh), sau đó mới sync relay.
         self._after_fwver = self.after(300, self._query_fw_ver)
         self._after_sync = self.after(1300, self._sync_state_from_device)
 
@@ -1112,9 +1153,14 @@ class App(tk.Tk):
         if not cmd:
             return
         if not self.worker.is_open:
-            messagebox.showwarning(APP_TITLE, "Chua ket noi COM port")
+            messagebox.showwarning(APP_TITLE, "Chưa kết nối COM port")
             return
         self.worker.write_line(cmd)
+        # Nếu người dùng đổi baud RS485 qua terminal -> đồng bộ nhãn hiển thị ngay
+        # (range khớp firmware 1200..921600; firmware cũng echo "RS485 BAUD:" lại)
+        mb = re.match(r"\s*baud\s+rs485\s+(\d+)\s*$", cmd, re.IGNORECASE)
+        if mb and 1200 <= int(mb.group(1)) <= 921600:
+            self._set_rs485_baud_display(mb.group(1))
         self.ent_cmd.delete(0, "end")
 
     def _clear_log(self):
@@ -1155,12 +1201,12 @@ class App(tk.Tk):
         serial_no = self.ent_serial.get().strip()
         if not serial_no:
             messagebox.showwarning(APP_TITLE,
-                                   "Nhap Serial/Ma thiet bi truoc khi RUN TEST")
+                                   "Nhập Serial/Mã thiết bị trước khi RUN TEST")
             self.ent_serial.focus_set()
             return
         self._serial_no = serial_no
-        # Huy cac tac vu ngam dat lich luc ket noi (doc FW / sync relay) neu
-        # chua chay -> tranh dung do lenh 'ver' cua test ngay sau khi ket noi.
+        # Hủy các tác vụ ngầm đặt lịch lúc kết nối (đọc FW / sync relay) nếu
+        # chưa chạy -> tránh đụng độ lệnh 'ver' của test ngay sau khi kết nối.
         for _aid in ("_after_fwver", "_after_sync"):
             if getattr(self, _aid, None) is not None:
                 try:
@@ -1170,7 +1216,7 @@ class App(tk.Tk):
                 setattr(self, _aid, None)
         self.testing = True
         self._stop_test.clear()
-        self.btn_run.config(text="STOP", bg="#ef4444",
+        self.btn_run.config(text="Stop", bg="#ef4444",
                              activebackground="#dc2626",
                              command=self._stop_tests)
         self.btn_conn.config(state="disabled")
@@ -1181,19 +1227,19 @@ class App(tk.Tk):
         for i, t in enumerate(TESTS):
             self.tree.insert("", "end", iid=str(i), text=t["name"], values=("...",))
 
-        self.lbl_sum.config(text="Dang chay test... (bam STOP de dung)",
+        self.lbl_sum.config(text="Đang chạy test... (bấm STOP để dừng)",
                              fg="#2563eb")
         threading.Thread(target=self._test_thread, daemon=True).start()
 
     def _stop_tests(self):
         self._stop_test.set()
         self.btn_run.config(state="disabled")
-        self.lbl_sum.config(text="Dang dung test...", fg="#f59e0b")
+        self.lbl_sum.config(text="Đang dừng test...", fg="#f59e0b")
 
     def _record(self, i, token, results, cell=None):
-        """Ghi ket qua 1 buoc. token: 'pass'|'fail'|'skip'|'stop'.
-        cell = chuoi ghi vao Excel (mac dinh theo token, vd skip -> 'Bo qua').
-        results = list cac tuple (token, cell)."""
+        """Ghi kết quả 1 bước. token: 'pass'|'fail'|'skip'|'stop'.
+        cell = chuỗi ghi vào Excel (mặc định theo token, vd skip -> 'Bỏ qua').
+        results = list các tuple (token, cell)."""
         tree_txt = {"pass": "PASS", "fail": "FAIL",
                     "skip": "BO QUA", "stop": "-"}.get(token, "-")
         tag = {"pass": "pass", "fail": "fail",
@@ -1208,14 +1254,14 @@ class App(tk.Tk):
         stopped = False
         results = []
         fw_ver = ""
-        # Cho thiet bi ranh (vd vua sync relay khi ket noi - moi relay pulse
-        # 500ms) va xa buffer truoc khi chay, tranh 'ver' (test dau) bi ket
-        # phia sau hang lenh relay -> fail oan.
+        # Chờ thiết bị rảnh (vd vừa sync relay khi kết nối - mỗi relay pulse
+        # 500ms) và xả buffer trước khi chạy, tránh 'ver' (test đầu) bị kẹt
+        # phía sau hàng lệnh relay -> fail oan.
         while time.time() < self._rl_busy_until and not self._stop_test.is_set():
             time.sleep(0.1)
         self.worker.clear_rx()
 
-        # Doc firmware 1 lan de ghi vao bao cao (KHONG phai 1 buoc test).
+        # Đọc firmware 1 lần để ghi vào báo cáo (KHÔNG phải 1 bước test).
         if not self._stop_test.is_set():
             _resp = self.worker.send_cmd("ver", 0.5)
             _m = re.search(r"FW\s+(\S+)", _resp)
@@ -1249,6 +1295,11 @@ class App(tk.Tk):
                 stopped = stopped or (token == "stop")
                 self._record(i, token, results, cell)
 
+            elif kind == "dip":
+                token, cell = self._run_dip_test()
+                stopped = stopped or (token == "stop")
+                self._record(i, token, results, cell)
+
             elif kind == "rs485":
                 token, cell = self._run_rs485_test(step["text"])
                 stopped = stopped or (token == "stop")
@@ -1263,7 +1314,7 @@ class App(tk.Tk):
 
         def done():
             self.testing = False
-            self.btn_run.config(text="Run TEST", bg=BLUE_BTN,
+            self.btn_run.config(text="Run Test", bg=BLUE_BTN,
                                  activebackground=BLUE_HOV,
                                  command=self._run_tests, state="normal")
             self.btn_conn.config(state="normal")
@@ -1272,22 +1323,34 @@ class App(tk.Tk):
             summ = (f"[{self._serial_no}] {n_pass} PASS / {n_fail} FAIL "
                     f"/ {n_skip} SKIP")
             if stopped:
-                self.lbl_sum.config(text=summ + "  --  DA DUNG", fg="#f59e0b")
+                ket = "ĐÃ DỪNG GIỮA CHỪNG"
+                self.lbl_sum.config(text=summ + "  --  ĐÃ DỪNG", fg="#f59e0b")
             else:
                 board_ok = (n_fail == 0)
+                ket = "BOARD OK" if board_ok else "CÓ LỖI"
                 self.lbl_sum.config(
-                    text=summ + ("  --  BOARD OK" if board_ok else "  --  CO LOI"),
+                    text=summ + ("  --  BOARD OK" if board_ok else "  --  CÓ LỖI"),
                     fg="#16a34a" if board_ok else "#dc2626")
-            self._save_report(fw_ver, cells, n_pass, n_fail, n_total, stopped)
+            # Thông báo hoàn tất + chọn lưu Excel hay bỏ qua
+            if messagebox.askyesno(
+                    APP_TITLE,
+                    "Test hoàn tất!\n\n"
+                    f"Serial: {self._serial_no}\n"
+                    f"Kết quả: {n_pass} PASS / {n_fail} FAIL / {n_skip} SKIP\n"
+                    f"Kết luận: {ket}\n\n"
+                    "Lưu kết quả vào file Excel?"):
+                self._save_report(fw_ver, cells, n_pass, n_fail, n_total, stopped)
+            else:
+                self._log("[Đã bỏ qua lưu report (người dùng chọn)]\n", "tx")
             self.ent_serial.delete(0, "end")
             self.ent_serial.focus_set()
         self.after(0, done)
 
     # ----------------------------------------------------------
     #  Interactive test helpers
-    #  (Dialog cap nhat tren MAIN thread: test thread chi goi
-    #   self.after(0, show) MOT lan roi ev.wait(). Khong goi tkinter
-    #   lien tuc tu thread phu -> tranh treo GUI.)
+    #  (Dialog cập nhật trên MAIN thread: test thread chỉ gọi
+    #   self.after(0, show) MỘT lần rồi ev.wait(). Không gọi tkinter
+    #   liên tục từ thread phụ -> tránh treo GUI.)
     # ----------------------------------------------------------
     def _dialog_place(self, win):
         win.update_idletasks()
@@ -1349,21 +1412,21 @@ class App(tk.Tk):
         return res["v"]
 
     def _run_led_test(self):
-        # B1: thong bao de nguoi test CHUAN BI quan sat truoc khi LED sang
+        # B1: thông báo để người test CHUẨN BỊ quan sát trước khi LED sáng
         ans = self._ask_user(
-            "Kiem tra LED",
-            "Chuan bi quan sat 4 den LED tren board.\n"
-            "Khi san sang, bam 'Bat dau' -> LED 1 -> 4 se sang lan luot,\n"
-            "sau do xac nhan den nao khong sang.",
-            [("Bat dau", "go", "#16a34a"), ("Bo qua", "skip", "#64748b")])
+            "Kiểm tra LED",
+            "Chuẩn bị quan sát 4 đèn LED trên board.\n"
+            "Khi sẵn sàng, bấm 'Bắt đầu' -> LED 1 -> 4 sẽ sáng lần lượt,\n"
+            "sau đó xác nhận đèn nào không sáng.",
+            [("Bắt đầu", "go", "#16a34a"), ("Bỏ qua", "skip", "#64748b")])
         if ans == "stop":
             return ("stop", None)
         if ans != "go":
             return ("skip", "Bo qua")
 
-        # B2: bat LED 1->4 lan luot tren board (lenh truc tiep tled)
+        # B2: bật LED 1->4 lần lượt trên board (lệnh trực tiếp tled)
         self.worker.clear_rx()
-        # LED active-low: lenh lam LED SANG la "tled off" (pin LOW).
+        # LED active-low: lệnh làm LED sáng là "tled off" (pin LOW).
         _on  = "off" if LED_ACTIVE_LOW else "on"
         _off = "on"  if LED_ACTIVE_LOW else "off"
         for n in range(1, N_RELAY + 1):
@@ -1379,11 +1442,11 @@ class App(tk.Tk):
         def show():
             fail = {n: False for n in range(1, N_RELAY + 1)}
             win = tk.Toplevel(self)
-            win.title("Kiem tra LED")
+            win.title("Kiểm tra LED")
             win.configure(bg=WHITE)
             win.resizable(False, False)
-            tk.Label(win, text="LED 1 -> 4 da bat lan luot tren board.\n"
-                               "Click vao LED nao KHONG sang de danh dau loi.",
+            tk.Label(win, text="LED 1 -> 4 đã bật lần lượt trên board.\n"
+                               "Click vào LED nào KHÔNG sáng để đánh dấu lỗi.",
                      bg=WHITE, fg="#1e293b", font=("Segoe UI", 11),
                      justify="left", padx=24).pack(pady=(16, 10))
             cellf = tk.Frame(win, bg=WHITE)
@@ -1436,11 +1499,11 @@ class App(tk.Tk):
                 except Exception:
                     pass
 
-            tk.Button(bf, text="Xac nhan", bg="#16a34a", fg="white",
+            tk.Button(bf, text="Xác nhận", bg="#16a34a", fg="white",
                       activebackground="#16a34a", font=("Segoe UI", 10, "bold"),
                       relief="flat", bd=0, padx=18, pady=8,
                       command=lambda: finish("confirm")).pack(side="left", padx=8)
-            tk.Button(bf, text="Bo qua", bg="#64748b", fg="white",
+            tk.Button(bf, text="Bỏ qua", bg="#64748b", fg="white",
                       activebackground="#64748b", font=("Segoe UI", 10, "bold"),
                       relief="flat", bd=0, padx=18, pady=8,
                       command=lambda: finish("skip")).pack(side="left", padx=8)
@@ -1458,7 +1521,7 @@ class App(tk.Tk):
 
         self.after(0, show)
         ev.wait()
-        for n in range(1, N_RELAY + 1):     # tat het LED sau khi kiem tra
+        for n in range(1, N_RELAY + 1):     # tắt hết LED sau khi kiểm tra
             if self.worker.is_open:
                 self.worker.write_line(f"tled {n} {_off}")
         return (res["token"], res["cell"])
@@ -1472,12 +1535,12 @@ class App(tk.Tk):
         def show():
             manual = set()
             win = tk.Toplevel(self)
-            win.title("Kiem tra nut nhan")
+            win.title("Kiểm tra nút nhấn")
             win.configure(bg=WHITE)
             win.resizable(False, False)
-            tk.Label(win, text="Nhan lan luot cac nut BT1 -> BT4 tren thiet bi\n"
-                               "(cham chuyen xanh). Du 4 nut se tu dong PASS.\n"
-                               "Hoac click vao o de danh dau thu cong.",
+            tk.Label(win, text="Nhấn lần lượt các nút BT1 -> BT4 trên thiết bị\n"
+                               "(chạm chuyển xanh). Đủ 4 nút sẽ tự động PASS.\n"
+                               "Hoặc click vào ô để đánh dấu thủ công.",
                      bg=WHITE, fg="#1e293b", font=("Segoe UI", 11),
                      justify="left", padx=24).pack(pady=(16, 10))
             statf = tk.Frame(win, bg=WHITE)
@@ -1514,10 +1577,10 @@ class App(tk.Tk):
                             res["cell"] = "PASS"
                         else:
                             res["token"] = "fail"
-                            res["cell"] = "Loi: " + ",".join(f"BT{n}" for n in miss)
+                            res["cell"] = "Lỗi: " + ",".join(f"BT{n}" for n in miss)
                     elif kind == "skip":
                         res["token"] = "skip"
-                        res["cell"] = "Bo qua"
+                        res["cell"] = "Bỏ qua"
                     else:  # stop
                         res["token"] = "stop"
                         res["cell"] = None
@@ -1527,11 +1590,11 @@ class App(tk.Tk):
                 except Exception:
                     pass
 
-            tk.Button(bf, text="Xac nhan", bg="#16a34a", fg="white",
+            tk.Button(bf, text="Xác nhận", bg="#16a34a", fg="white",
                       activebackground="#16a34a", font=("Segoe UI", 10, "bold"),
                       relief="flat", bd=0, padx=18, pady=8,
                       command=lambda: finish("confirm")).pack(side="left", padx=8)
-            tk.Button(bf, text="Bo qua", bg="#64748b", fg="white",
+            tk.Button(bf, text="Bỏ qua", bg="#64748b", fg="white",
                       activebackground="#64748b", font=("Segoe UI", 10, "bold"),
                       relief="flat", bd=0, padx=18, pady=8,
                       command=lambda: finish("skip")).pack(side="left", padx=8)
@@ -1560,8 +1623,112 @@ class App(tk.Tk):
         self._bt_test_active = False
         return (res["token"], res["cell"])
 
+    def _run_dip_test(self):
+        # Lấy giá trị DIP hiện tại làm mốc rồi theo dõi từng bit bị gạt (giống BT)
+        self.worker.clear_rx()
+        resp = self.worker.send_cmd("dip", 0.4)
+        m = RX_DIP_RE.search(resp)
+        if m:
+            self._dip_last_value = int(m.group(1), 16)
+            self.after(0, lambda v=self._dip_last_value: self._update_dip(v))
+        self._dip_test_seen = set()
+        self._dip_test_active = True
+        res = {"token": None, "cell": None}
+        ev = threading.Event()
+
+        def show():
+            manual = set()
+            win = tk.Toplevel(self)
+            win.title("Kiểm tra DIP Switch")
+            win.configure(bg=WHITE)
+            win.resizable(False, False)
+            tk.Label(win, text="Gạt lần lượt DIP1 -> DIP4 trên thiết bị\n"
+                               "(gạt sẽ chuyển xanh). Đủ 4 bit sẽ tự động PASS.\n"
+                               "Hoặc click vào ô để đánh dấu thủ công.",
+                     bg=WHITE, fg="#1e293b", font=("Segoe UI", 11),
+                     justify="left", padx=24).pack(pady=(16, 10))
+            statf = tk.Frame(win, bg=WHITE)
+            statf.pack(pady=4)
+            cells = {}
+
+            def manual_mark(n):
+                manual.add(n)
+
+            for n in range(1, 5):
+                cell = tk.Frame(statf, bg=WHITE, cursor="hand2")
+                cell.pack(side="left", padx=12)
+                dot = tk.Canvas(cell, width=20, height=20, bg=WHITE,
+                                highlightthickness=0)
+                oid = dot.create_oval(2, 2, 18, 18, fill="#cbd5e1", outline="")
+                dot.pack()
+                lbl = tk.Label(cell, text=f"DIP{n}", bg=WHITE,
+                               font=("Segoe UI", 9))
+                lbl.pack()
+                cells[n] = (dot, oid)
+                for w in (cell, dot, lbl):
+                    w.bind("<Button-1>", lambda e, nn=n: manual_mark(nn))
+
+            bf = tk.Frame(win, bg=WHITE)
+            bf.pack(pady=(10, 16))
+
+            def finish(kind):
+                if not ev.is_set():
+                    marked = set(self._dip_test_seen) | manual
+                    if kind in ("confirm", "auto"):
+                        miss = [n for n in range(1, 5) if n not in marked]
+                        if kind == "auto" or not miss:
+                            res["token"] = "pass"
+                            res["cell"] = "PASS"
+                        else:
+                            res["token"] = "fail"
+                            res["cell"] = "Lỗi: " + ",".join(f"DIP{n}" for n in miss)
+                    elif kind == "skip":
+                        res["token"] = "skip"
+                        res["cell"] = "Bỏ qua"
+                    else:  # stop
+                        res["token"] = "stop"
+                        res["cell"] = None
+                    ev.set()
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+
+            tk.Button(bf, text="Xác nhận", bg="#16a34a", fg="white",
+                      activebackground="#16a34a", font=("Segoe UI", 10, "bold"),
+                      relief="flat", bd=0, padx=18, pady=8,
+                      command=lambda: finish("confirm")).pack(side="left", padx=8)
+            tk.Button(bf, text="Bỏ qua", bg="#64748b", fg="white",
+                      activebackground="#64748b", font=("Segoe UI", 10, "bold"),
+                      relief="flat", bd=0, padx=18, pady=8,
+                      command=lambda: finish("skip")).pack(side="left", padx=8)
+            win.protocol("WM_DELETE_WINDOW", lambda: finish("skip"))
+            self._dialog_place(win)
+
+            def tick():
+                if ev.is_set():
+                    return
+                if self._stop_test.is_set():
+                    finish("stop")
+                    return
+                marked = set(self._dip_test_seen) | manual
+                for n in marked:
+                    if n in cells:
+                        d, o = cells[n]
+                        d.itemconfig(o, fill="#22c55e")
+                if len(marked) >= 4:
+                    finish("auto")
+                    return
+                win.after(150, tick)
+            tick()
+
+        self.after(0, show)
+        ev.wait()
+        self._dip_test_active = False
+        return (res["token"], res["cell"])
+
     def _run_rs485_test(self, text):
-        # Gui text qua RS485; voi loopback (A-B / TX-RX) thiet bi se vong text
+        # Gửi text qua RS485; với loopback (A-B / TX-RX) thiết bị sẽ vọng text
         # ve console (rs485_process forward). Kiem tra text co trong phan hoi.
         self.worker.clear_rx()
         resp = self.worker.send_cmd(f"rs485 {text}", 1.2)
@@ -1569,11 +1736,11 @@ class App(tk.Tk):
             return ("pass", "PASS")
         ans = self._ask_user(
             "Test RS485",
-            f"Da gui '{text}' qua RS485 nhung CHUA nhan duoc vong ve.\n"
-            "Kiem tra day loopback RS485 (A-B hoac TX-RX).\n\n"
-            "Thu lai, bo qua buoc nay, hay danh FAIL?",
-            [("Thu lai", "retry", BLUE_BTN),
-             ("Bo qua", "skip", "#64748b"),
+            f"Đã gửi '{text}' qua RS485 nhưng chưa nhận được vòng về.\n"
+            "Kiểm tra dây loopback RS485 (A-B hoặc TX-RX).\n\n"
+            "Thử lại, bỏ qua bước này, hay đánh FAIL?",
+            [("Thử lại", "retry", BLUE_BTN),
+             ("Bỏ qua", "skip", "#64748b"),
              ("FAIL", "fail", "#ef4444")])
         if ans == "retry":
             return self._run_rs485_test(text)
@@ -1602,13 +1769,13 @@ class App(tk.Tk):
                     if is_new:
                         w.writerow(header)
                     w.writerow(row)
-                self._log(f"[Khong co openpyxl - da ghi CSV: {path}]\n", "tx")
+                self._log(f"[Không có openpyxl - đã ghi CSV: {path}]\n", "tx")
             except PermissionError:
                 messagebox.showerror(
                     APP_TITLE,
-                    "Khong ghi duoc CSV - file dang mo?\nDong file roi chay lai.")
+                    "Không ghi được CSV - file đang mở?\nĐóng file rồi chạy lại.")
             except Exception as e:
-                messagebox.showerror(APP_TITLE, f"Loi luu report:\n{e}")
+                messagebox.showerror(APP_TITLE, f"Lỗi lưu report:\n{e}")
             return
 
         path = report_path()
@@ -1623,14 +1790,14 @@ class App(tk.Tk):
                 ws.append(header)
             ws.append(row)
             wb.save(path)
-            self._log(f"[Da ghi report: {path}]\n", "tx")
+            self._log(f"[Đã ghi report: {path}]\n", "tx")
         except PermissionError:
             messagebox.showerror(
                 APP_TITLE,
-                f"Khong ghi duoc {REPORT_NAME} - file dang mo trong Excel?\n"
-                "Dong file roi chay test lai.")
+                f"Không ghi được {REPORT_NAME} - file đang mở trong Excel?\n"
+                "Đóng file rồi chạy test lại.")
         except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Loi luu report:\n{e}")
+            messagebox.showerror(APP_TITLE, f"Lỗi lưu report:\n{e}")
 
     def _set_row(self, idx, text, tag):
         self.after(0, lambda: self.tree.item(str(idx), values=(text,), tags=(tag,)))

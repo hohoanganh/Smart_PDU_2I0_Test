@@ -10,7 +10,7 @@
 #define PCA_REG_OUT 1
 #define PCA_REG_CFG 3
 
-#define RELAY_PULSE_MS 500  // xung kich relay chot 0.5s roi nha (ca ON va OFF)
+#define RELAY_PULSE_MS 800  // xung kich relay chot 0.5s roi nha (ca ON va OFF)
 
 static bool pca_present = false;
 

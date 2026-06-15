@@ -297,6 +297,20 @@ static void cli_execute(char *cmd) {
         flash_test_rw();
     }
 
+    // Alias: "rs485 baud <n>" = doi baud RS485 (giong "baud rs485 <n>")
+    else if (strncmp(cmd, "rs485 baud", 10) == 0) {
+        unsigned long b = 0;
+        if (sscanf(cmd, "rs485 baud %lu", &b) == 1 &&
+            b >= 1200 && b <= 921600) {
+            rs485_set_baud(b);
+            SerialDBG.print("RS485 BAUD: ");
+            SerialDBG.println(b);
+            SerialDBG.println("OK");
+        } else {
+            SerialDBG.println("Usage: rs485 baud <1200-921600>");
+        }
+    }
+
     else if (strncmp(cmd, "rs485", 5) == 0) {
 
         char text[64] = "RS485 TEST\n";
@@ -357,11 +371,17 @@ static void cli_execute(char *cmd) {
         char port[8];
         unsigned long b = 0;
 
-        if (sscanf(cmd, "baud %7s %lu", port, &b) == 2 &&
+        if (strcmp(cmd, "baud") == 0) {
+            // Truy van: bao baud RS485 hien tai (app hien thi dong)
+            SerialDBG.print("RS485 BAUD: ");
+            SerialDBG.println(rs485_get_baud());
+        } else if (sscanf(cmd, "baud %7s %lu", port, &b) == 2 &&
             b >= 1200 && b <= 921600) {
 
             if (strcmp(port, "rs485") == 0) {
                 rs485_set_baud(b);
+                SerialDBG.print("RS485 BAUD: ");   // bao baud moi cho app
+                SerialDBG.println(b);
                 SerialDBG.println("OK");
             } else if (strcmp(port, "u3") == 0) {
                 uart3_set_baud(b);
