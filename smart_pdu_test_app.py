@@ -250,6 +250,9 @@ class App(tk.Tk):
         self._buzzer_muted    = False   # tắt tiếng bíp (test im lặng)
         self._cmd_history     = []      # lịch sử lệnh terminal (tối đa 50)
         self._cmd_hist_idx    = -1      # vị trí duyệt lịch sử (-1 = hiện tại)
+        self._connecting        = False  # đang mở cổng / xác thực ID
+        self._connect_cancelled = False  # người dùng đã bấm Hủy
+        self._connect_timeout_id = None  # id self.after() của watchdog cảnh báo
 
         self._build_ui()
         self._refresh_ports()
@@ -374,10 +377,12 @@ class App(tk.Tk):
         # control không bị co giãn/nhảy ngang (giao diện đứng yên).
         self.cbo_port = ttk.Combobox(ctrl, width=46, state="readonly")
         self.cbo_port.pack(side="left", padx=(4, 2))
-        tk.Button(ctrl, text="↻", bg="#2d4a62", fg="white",
-                  activebackground="#3a5f7a", relief="raised", bd=2,
-                  font=("Segoe UI", 9, "bold"), width=2, pady=2,
-                  command=self._refresh_ports).pack(side="left", padx=(0, 10))
+        self.btn_refresh_port = tk.Button(
+            ctrl, text="↻", bg="#2d4a62", fg="white",
+            activebackground="#3a5f7a", relief="raised", bd=2,
+            font=("Segoe UI", 9, "bold"), width=2, pady=2,
+            command=self._refresh_ports)
+        self.btn_refresh_port.pack(side="left", padx=(0, 10))
 
         tk.Label(ctrl, text="Baud:", bg=CTRL_BG, fg="#94a3b8",
                  font=("Segoe UI", 9)).pack(side="left")
@@ -1107,23 +1112,131 @@ class App(tk.Tk):
             self._dev_info["Firmware:"].config(text="--")
             return
 
+        if self._connecting:
+            # Nút đang đóng vai trò "Hủy" trong lúc mở cổng/xác thực
+            self._cancel_connect()
+            return
+
         port = self._sel_port()
         if not port:
             messagebox.showwarning(APP_TITLE, "Chưa chọn COM port")
             return
         baud = int(self.cbo_baud.get() or BAUD)
+
+        # Mở cổng CHẠY NỀN (thread riêng): một số cổng COM ảo (vd Bluetooth
+        # SPP) có thể treo nhiều giây/vô thời hạn ngay tại bước mở cổng ->
+        # nếu gọi serial.Serial() trực tiếp trên main thread, cả app sẽ bị
+        # đứng (không bấm được gì, kể cả nút Hủy). Mở nền + nút Hủy cho phép
+        # người dùng bỏ attempt bị treo và chọn cổng COM khác ngay.
+        self._connecting = True
+        self._connect_cancelled = False
+        self.cbo_port.config(state="disabled")
+        self.cbo_baud.config(state="disabled")
+        self.btn_refresh_port.config(state="disabled")
+        self.btn_conn.config(text="Hủy Kết Nối", bg="#f59e0b",
+                              activebackground="#d97706", state="normal",
+                              command=self._cancel_connect)
+        self._lbl_conn.config(text="Đang mở cổng...", fg="#f59e0b")
+        self._conn_dot.itemconfig(self._conn_dot_oid, fill="#f59e0b")
+        self.lbl_status.config(text=f"* Đang mở {port} @ {baud}...",
+                               fg="#f59e0b")
+        self._log(f"[Đang mở {port} @ {baud}...]\n", "tx")
+
+        def _do_open():
+            try:
+                ser = serial.Serial(port, baud, timeout=0.1)
+            except Exception as e:
+                self.after(0, lambda: self._on_open_result(None, e, port, baud))
+                return
+            self.after(0, lambda: self._on_open_result(ser, None, port, baud))
+
+        threading.Thread(target=_do_open, daemon=True).start()
+        # Watchdog: mở cổng quá lâu (thường gặp ở cổng Bluetooth/ảo bị treo)
+        # -> cảnh báo người dùng có thể bấm Hủy để chọn cổng khác.
+        self._connect_timeout_id = self.after(4000, self._on_connect_slow)
+
+    def _on_connect_slow(self):
+        self._connect_timeout_id = None
+        if self._connecting and not self._connect_cancelled:
+            self.lbl_status.config(
+                text=("* Mở cổng quá lâu - có thể đây là cổng COM ảo "
+                      "(Bluetooth/...) bị treo. Bấm 'Hủy Kết Nối' để chọn "
+                      "cổng khác."), fg="#ef4444")
+            self._log("[Cảnh báo: mở cổng quá lâu - bấm Hủy Kết Nối để chọn "
+                       "cổng COM khác]\n", "err")
+
+    def _cancel_connect(self):
+        """Người dùng bấm Hủy trong lúc đang mở cổng / xác thực ID.
+        Lưu ý: nếu serial.Serial() đang treo trong thread nền, KHÔNG có cách
+        nào dừng cuộc gọi đó giữa chừng (Python không kill thread blocking
+        I/O) -> ta chỉ bỏ qua kết quả của attempt đó (cờ _connect_cancelled)
+        và trả UI về trạng thái sẵn sàng để người dùng thử cổng COM khác
+        ngay; thread cũ (daemon) tự kết thúc âm thầm khi nó trả về."""
+        self._connect_cancelled = True
+        if self._connect_timeout_id is not None:
+            self.after_cancel(self._connect_timeout_id)
+            self._connect_timeout_id = None
         try:
-            self.worker.open(port, baud)
-        except serial.SerialException as e:
-            messagebox.showerror(APP_TITLE, f"Không mở được {port}:\n{e}")
+            self.worker.close()
+        except Exception:
+            pass
+        self._connecting = False
+        self._rx_scan_buf = ""
+        self.cbo_port.config(state="readonly")
+        self.cbo_baud.config(state="readonly")
+        self.btn_refresh_port.config(state="normal")
+        self.btn_conn.config(text="Kết Nối", bg=BLUE_BTN,
+                              activebackground=BLUE_HOV, state="normal",
+                              command=self._toggle_conn)
+        self.btn_run.config(state="disabled")
+        self._set_relay_ctrl_state(False)
+        self._conn_dot.itemconfig(self._conn_dot_oid, fill="#64748b")
+        self._lbl_conn.config(text="Chưa kết nối", fg="#94a3b8")
+        self.lbl_status.config(text="* Đã hủy kết nối - chọn cổng COM khác",
+                               fg="#94a3b8")
+        self._log("[Đã hủy kết nối - có thể chọn cổng COM khác]\n", "err")
+
+    def _on_open_result(self, ser, err, port, baud):
+        if self._connect_timeout_id is not None:
+            self.after_cancel(self._connect_timeout_id)
+            self._connect_timeout_id = None
+
+        if self._connect_cancelled:
+            # Người dùng đã Hủy trước khi mở xong (UI đã được reset rồi) ->
+            # nếu cổng cuối cùng vẫn mở được thì đóng luôn, không dùng nữa.
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
             return
 
-        # Mở cổng xong -> XÁC THỰC ID trước khi cho điều khiển (tránh nhầm cổng COM)
+        if err is not None:
+            self._connecting = False
+            self.cbo_port.config(state="readonly")
+            self.cbo_baud.config(state="readonly")
+            self.btn_refresh_port.config(state="normal")
+            self.btn_conn.config(text="Kết Nối", bg=BLUE_BTN,
+                                  activebackground=BLUE_HOV,
+                                  command=self._toggle_conn)
+            self._conn_dot.itemconfig(self._conn_dot_oid, fill="#ef4444")
+            self._lbl_conn.config(text="Chưa kết nối", fg="#94a3b8")
+            self.lbl_status.config(text="* Chưa kết nối", fg="#64748b")
+            self._log(f"[Không mở được {port}: {err}]\n", "err")
+            messagebox.showerror(APP_TITLE, f"Không mở được {port}:\n{err}")
+            return
+
+        # Mở cổng OK -> gắn vào worker, bắt đầu thread đọc, rồi XÁC THỰC ID
+        # trước khi cho điều khiển (tránh nhầm cổng COM).
+        self.worker.ser = ser
+        self.worker._stop.clear()
+        self.worker._thread = threading.Thread(
+            target=self.worker._reader, daemon=True)
+        self.worker._thread.start()
+
         self._lbl_conn.config(text="Đang kiểm tra...", fg="#f59e0b")
-        self._conn_dot.itemconfig(self._conn_dot_oid, fill="#f59e0b")
         self.lbl_status.config(text=f"* {port}: đang xác thực thiết bị...",
                                fg="#f59e0b")
-        self.btn_conn.config(state="disabled")
         self._log(f"[Mở {port} @ {baud} - kiểm tra ID thiết bị...]\n", "tx")
 
         def _verify():
@@ -1133,6 +1246,12 @@ class App(tk.Tk):
         threading.Thread(target=_verify, daemon=True).start()
 
     def _on_verify_result(self, ok, port, baud):
+        if self._connect_cancelled:
+            return    # đã Hủy, UI đã được reset trong _cancel_connect
+        self._connecting = False
+        self.cbo_port.config(state="readonly")
+        self.cbo_baud.config(state="readonly")
+        self.btn_refresh_port.config(state="normal")
         self.btn_conn.config(state="normal")
         if not self.worker.is_open:
             return    # người dùng đã ngắt trong lúc kiểm tra
@@ -1140,7 +1259,8 @@ class App(tk.Tk):
             # SAI thiết bi / nhầm cổng COM -> đóng cổng, cảnh báo
             self.worker.close()
             self.btn_conn.config(text="Kết Nối", bg=BLUE_BTN,
-                                  activebackground=BLUE_HOV)
+                                  activebackground=BLUE_HOV,
+                                  command=self._toggle_conn)
             self._conn_dot.itemconfig(self._conn_dot_oid, fill="#ef4444")
             self._lbl_conn.config(text="SAI thiết bị/baud!", fg="#ef4444")
             self.lbl_status.config(
@@ -1159,7 +1279,8 @@ class App(tk.Tk):
 
         # ĐÚNG thiết bị -> hoàn tất kết nối
         self.btn_conn.config(text="Ngắt Kết Nối", bg="#ef4444",
-                              activebackground="#dc2626")
+                              activebackground="#dc2626",
+                              command=self._toggle_conn)
         self.btn_run.config(state="normal")
         self._set_relay_ctrl_state(True)
         self._conn_dot.itemconfig(self._conn_dot_oid, fill="#22c55e")

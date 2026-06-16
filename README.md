@@ -7,22 +7,22 @@ Bộ đóng/ngắt **4 relay chốt** (latching relay) dựa trên AK MCU KIT (S
 
 ## Phần cứng
 
-| Khối | Kết nối | Ghi chú |
-|---|---|---|
-| PCA9554A | I2C1 (PB6/PB7), A0-A2 = GND → addr **0x38**, INT → PB15 | |
-| Relay 1 (RL1) | D2 = OFF, D5 = ON — xung 200 ms | |
-| Relay 2 (RL2) | D3 = OFF, D6 = ON — xung 200 ms | |
-| Relay 3 (RL3) | D4 = OFF, D7 = ON — xung 200 ms | |
-| Relay BATT (RL_BATT) | D0 = OFF, D1 = ON — xung 200 ms | |
-| Nút BT1-4 | PB3, PC13, PB4, PB9 | INPUT_PULLUP |
-| LED1-4 | PB1, PB12, PB13, PA11 | Active-low: LOW = sáng |
-| LED_DBG | PB8 | Heartbeat 1 Hz |
-| Buzzer | PB0 | Active-high (HNB09A05 5 V) |
-| Console | USART1 PA9/PA10 | **115200** baud (cố định) |
-| RS485 | USART2 PA2/PA3, DIR = PA1 | Mặc định 9600, đổi được |
-| UART3 | PB10/PB11 | Header 2.54 mm 3-pin |
-| SPI Flash | SPI1, CS = PB14 | Lưu relay state tại addr 0x1000 |
-| DIP Switch | PA0 (BIT1), PA4 (BIT2), PA8 (BIT3), PA15 (BIT4) | INPUT_PULLUP, ON = LOW |
+| Khối                 | Kết nối                                                 | Ghi chú                         |
+| -------------------- | ------------------------------------------------------- | ------------------------------- |
+| PCA9554A             | I2C1 (PB6/PB7), A0-A2 = GND → addr **0x38**, INT → PB15 |                                 |
+| Relay 1 (RL1)        | D2 = OFF, D5 = ON — xung 200 ms                         |                                 |
+| Relay 2 (RL2)        | D3 = OFF, D6 = ON — xung 200 ms                         |                                 |
+| Relay 3 (RL3)        | D4 = OFF, D7 = ON — xung 200 ms                         |                                 |
+| Relay BATT (RL_BATT) | D0 = OFF, D1 = ON — xung 200 ms                         |                                 |
+| Nút BT1-4            | PB3, PC13, PB4, PB9                                     | INPUT_PULLUP                    |
+| LED1-4               | PB1, PB12, PB13, PA11                                   | Active-low: LOW = sáng          |
+| LED_DBG              | PB8                                                     | Heartbeat 1 Hz                  |
+| Buzzer               | PB0                                                     | Active-high (HNB09A05 5 V)      |
+| Console              | USART1 PA9/PA10                                         | **115200** baud (cố định)       |
+| RS485                | USART2 PA2/PA3, DIR = PA1                               | Mặc định 9600, đổi được         |
+| UART3                | PB10/PB11                                               | Header 2.54 mm 3-pin            |
+| SPI Flash            | SPI1, CS = PB14                                         | Lưu relay state tại addr 0x1000 |
+| DIP Switch           | PA0 (BIT1), PA4 (BIT2), PA8 (BIT3), PA15 (BIT4)         | INPUT_PULLUP, ON = LOW          |
 
 > **Relay chốt:** giữ trạng thái bằng cơ khí, không cần cấp điện liên tục.  
 > Firmware lưu trạng thái vào **SPI Flash** sau mỗi thay đổi — khôi phục tự động sau reset/mất điện.  
